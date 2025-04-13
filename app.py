@@ -1,14 +1,23 @@
-from flask import Flask, render_template, request, redirect, url_for, session, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, send_from_directory
 import json
 import io
 
 app = Flask(__name__)
-app.secret_key = 'tajny_klucz'  # Ustaw swój własny, bezpieczny klucz
+app.secret_key = 'tajny_klucz'
 
 
 def init_session():
     if 'transactions' not in session:
         session['transactions'] = []
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(
+        os.path.join(app.root_path, 'static'),
+        'favicon.ico',
+        mimetype='image/vnd.microsoft.icon'
+    )
+
 
 
 def compute_settlement(transactions):
