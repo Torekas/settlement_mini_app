@@ -195,7 +195,7 @@
       </div>
     </div>
 
-    <!-- Rozliczenie dodatkowe - Podsumowanie kosztów -->
+    <!-- Rozliczenie dodatkowe – Podsumowanie kosztów -->
     <div class="card mb-4 shadow-sm">
       <div class="card-header">
         Rozliczenie dodatkowe – Podsumowanie kosztów
@@ -228,34 +228,47 @@
       </div>
     </div>
 
-    <!-- Rozliczenie ogólne – Ile kto komu powinien oddać -->
-    {% if settlement %}
+    <!-- Rozliczenie ogólne – Porównanie każdy z każdym (macierz rozliczeń) -->
+    {% if settlement_matrix %}
     <div class="card mb-4 shadow-sm">
       <div class="card-header">
-        Rozliczenie ogólne – Ile kto komu powinien oddać
+        Rozliczenie ogólne – Ile kto komu powinien oddać (porównanie każdy z każdym)
       </div>
       <div class="card-body">
+        {% if negatives|length > 0 and positives|length > 0 %}
         <table class="table table-bordered">
           <thead>
             <tr>
-              <th>Od</th>
-              <th>Do</th>
-              <th>Kwota (euro)</th>
+              <th>Dłużnik \ Kredytor</th>
+              {% for pos in positives %}
+              <th>{{ pos }}</th>
+              {% endfor %}
             </tr>
           </thead>
           <tbody>
-            {% for s in settlement.transactions %}
+            {% for neg in negatives %}
             <tr>
-              <td>{{ s.from }}</td>
-              <td>{{ s.to }}</td>
-              <td>{{ "%.2f"|format(s.amount) }}</td>
+              <td>{{ neg }}</td>
+              {% for pos in positives %}
+              <td>
+                {% if settlement_matrix[neg] is defined and settlement_matrix[neg][pos] is defined %}
+                  {{ "%.2f"|format(settlement_matrix[neg][pos]) }}
+                {% else %}
+                  0.00
+                {% endif %}
+              </td>
+              {% endfor %}
             </tr>
             {% endfor %}
           </tbody>
         </table>
+        {% else %}
+          <p class="text-center">Brak danych do macierzy rozliczeń.</p>
+        {% endif %}
       </div>
     </div>
     {% endif %}
+
   </div>
 
   <footer>

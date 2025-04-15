@@ -4,7 +4,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, s
 import io
 
 app = Flask(__name__)
-app.secret_key = 'tajny_klucz'  # Ustaw swój własny bezpieczny klucz
+app.secret_key = 'tajny_klucz'  # Ustaw swój własny, bezpieczny klucz
 
 
 def init_session():
@@ -12,20 +12,22 @@ def init_session():
         session['transactions'] = []
 
 
-def compute_settlement(transactions):
+def compute_settlement_matrix(transactions):
     """
-    Nowa logika obliczania rozliczenia:
-     - Wyznacza zbiór wszystkich osób na podstawie płatników oraz beneficjentów.
-     - Dla każdej transakcji kwota dzielona jest równo między beneficjentów.
-     - Oblicza się dla każdej osoby:
-          paid (suma wpłat jako płatnik) oraz owes (suma udziałów, gdy osoba występuje jako beneficjent).
-     - Net = paid - owes.
-     - Następnie, osoby z nadpłatą (net > 0) oraz te, które mają niedopłatę (net < 0)
-       są sortowane, a potem dopasowywane do stworzenia listy rozliczeń (kto komu ile oddaje).
+    Oblicza macierz rozliczeń – porównanie każdego dłużnika (osoba z ujemnym saldem)
+    z każdym kredytorem (osoba z dodatnim saldem) według poniższej logiki:
+      1. Wyznacz zbiór osób na podstawie płatników i beneficjentów.
+      2. Dla każdej transakcji kwota dzielona jest równomiernie między beneficjentów.
+      3. Obliczamy dla każdej osoby:
+             paid  – suma kwot, które zapłaciła (jako płatnik),
+             owes  – suma udziałów wynikających z bycia beneficjentem.
+         Net = paid − owes.
+      4. Dla osób z dodatnim net (kredytorzy) oraz ujemnym net (dłużnicy) wyznaczamy:
+         – całkowitą dodatnią sumę (total_positive).
+         – dla każdego dłużnika, kwota do spłaty zostaje rozdzielona proporcjonalnie do wkładu każdego kredytora.
 
-    Zwraca słownik z dwoma kluczami:
-       "net" - podsumowanie netto (dla każdej osoby),
-       "transactions" - lista rozliczeniowa, np. { "from": X, "to": Y, "amount": Z }.
+    Zwracamy macierz w postaci słownika:
+         { dłużnik: { kredytor: kwota, ... } }
     """
     # Wyznacz zbiór osób
     people = set()
@@ -35,9 +37,9 @@ def compute_settlement(transactions):
             people.add(b)
     people = list(people)
 
-    # Oblicz sumy wpłat i udziałów
     paid = defaultdict(float)
     owes = defaultdict(float)
+
     for item in transactions:
         try:
             amt = float(item["amount"])
@@ -47,71 +49,44 @@ def compute_settlement(transactions):
         beneficiaries = item["beneficiaries"]
         n = len(beneficiaries)
         if n == 0:
-            # edge case: jeśli brak beneficjentów, pomijamy transakcję
             continue
         share = amt / n
         paid[payer] += amt
         for b in beneficiaries:
             owes[b] += share
 
-    # Oblicz saldo netto dla każdej osoby
     net = {}
     for p in people:
         net[p] = paid[p] - owes[p]
 
-    # Podziel osoby na pozytywne (należy im się pieniądz) i negatywne (muszą zapłacić)
-    positive = []
-    negative = []
+    positives = {}
+    negatives = {}
     for p in people:
-        if abs(net[p]) < 0.000001:
-            net[p] = 0.0
-        if net[p] > 0:
-            positive.append((p, net[p]))
-        elif net[p] < 0:
-            negative.append((p, -net[p]))  # przechowujemy jako wartość dodatnią ile ktoś musi zapłacić
-
-    positive.sort(key=lambda x: x[1], reverse=True)
-    negative.sort(key=lambda x: x[1], reverse=True)
-
-    # Dopasuj dłużników do kredytorów, tworząc listę rozliczeń
-    settlements = []
-    i, j = 0, 0
-    while i < len(positive) and j < len(negative):
-        pos_name, pos_amt = positive[i]
-        neg_name, neg_amt = negative[j]
-        settle_amt = min(pos_amt, neg_amt)
-        settlements.append((neg_name, pos_name, settle_amt))
-        pos_amt -= settle_amt
-        neg_amt -= settle_amt
-        positive[i] = (pos_name, pos_amt)
-        negative[j] = (neg_name, neg_amt)
-        if abs(pos_amt) < 0.000001:
-            i += 1
-        if abs(neg_amt) < 0.000001:
-            j += 1
-
-    settlement_list = []
-    for payer, payee, amount in settlements:
-        settlement_list.append({
-            "from": payer,
-            "to": payee,
-            "amount": round(amount, 2)
-        })
-
-    net_summary = {p: round(net[p], 2) for p in sorted(people)}
-
-    return {"net": net_summary, "transactions": settlement_list}
+        if net[p] > 1e-6:
+            positives[p] = net[p]
+        elif net[p] < -1e-6:
+            negatives[p] = -net[p]
+    total_positive = sum(positives.values())
+    matrix = {}
+    for neg in negatives:
+        matrix[neg] = {}
+        for pos in positives:
+            if total_positive != 0:
+                # Każdy dłużnik rozdziela swoją całkowitą kwotę zadłużenia proporcjonalnie
+                matrix[neg][pos] = round(negatives[neg] * (positives[pos] / total_positive), 2)
+            else:
+                matrix[neg][pos] = 0.0
+    return matrix
 
 
 def get_detailed_settlement(transactions):
     """
-    Oblicza dla każdej osoby:
+    Oblicza szczegółowe podsumowanie kosztów dla każdej osoby:
       - "paid": suma wpłat jako płatnik,
       - "owes": suma udziałów (gdy osoba jest beneficjentem),
-      - "net": różnica (paid - owes).
+      - "net": różnica (paid – owes).
     Zwraca słownik: { osoba: { "paid": X, "owes": Y, "net": Z } }.
     """
-    from collections import defaultdict
     paid = defaultdict(float)
     owes = defaultdict(float)
     people = set()
@@ -142,8 +117,8 @@ def get_detailed_settlement(transactions):
 def get_lodging_summary(transactions):
     """
     Dla transakcji, których opis zawiera słowo "nocleg" (case-insensitive),
-    kwota jest dzielona równo między beneficjentów.
-    Sumuje udział dla każdej osoby za noclegi.
+    dzieli kwotę równomiernie między beneficjentów, po czym sumuje, ile każda osoba
+    powinna zapłacić za noclegi.
     Zwraca słownik { osoba: suma udziału za noclegi }.
     """
     summary = {}
@@ -167,7 +142,7 @@ def get_lodging_summary(transactions):
 @app.route('/', methods=['GET', 'POST'])
 def index():
     init_session()
-    settlement = None
+    settlement_matrix = None
     errors = None
     edit_index = None
     edit_transaction = None
@@ -254,7 +229,8 @@ def index():
                 errors = "Błąd podczas usuwania transakcji."
         elif action == 'calculate':
             transactions = session.get('transactions', [])
-            settlement = compute_settlement(transactions)
+            # Używamy funkcji compute_settlement_matrix – rozliczenie proporcjonalne
+            settlement_matrix = compute_settlement_matrix(transactions)
         elif action == 'reset':
             session['transactions'] = []
             return redirect(url_for('index'))
@@ -277,11 +253,17 @@ def index():
     transactions = session.get('transactions', [])
     lodging_summary = get_lodging_summary(transactions)
     detailed_settlement = get_detailed_settlement(transactions)
+    # Dla wygodnego wyświetlania w macierzy – sortujemy osoby
+    positives = sorted([p for p, d in detailed_settlement.items() if d['net'] > 0])
+    negatives = sorted([p for p, d in detailed_settlement.items() if d['net'] < 0])
+
     return render_template('index.html',
                            transactions=transactions,
-                           settlement=settlement,
+                           settlement_matrix=settlement_matrix,
                            lodging_summary=lodging_summary,
                            detailed_settlement=detailed_settlement,
+                           positives=positives,
+                           negatives=negatives,
                            errors=errors,
                            edit_index=edit_index,
                            edit_transaction=edit_transaction)
