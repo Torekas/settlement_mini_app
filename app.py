@@ -13,11 +13,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'C46ABA8FA628964A54B9D2B7A2E7Fo')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 # URI do MongoDB – najlepiej trzymać w zmiennej środowiskowej
 MONGODB_URI = os.getenv(
-    'MONGODB_URI',
-    "mongodb+srv://janmichalak78:W9DJ4jAcjjVXFYPp@cluster0.gk8zvxq.mongodb.net/settlement_db?retryWrites=true&w=majority"
+    'MONGODB_URI'
 )
 
 client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
@@ -176,18 +175,119 @@ def index():
 
     if request.method == 'POST':
         action = request.form.get('action')
-        # [handle add, edit, update, delete, calculate, reset, import] same as before, using request.form.get('id') and transaction_col
-        # ... implementation omitted for brevity ...
-        pass
 
+        # 1) Dodaj
+        if action == 'add':
+            payer      = request.form.get('payer', '').strip()
+            amount_str = request.form.get('amount', '').strip()
+            bens_str   = request.form.get('beneficiaries', '').strip()
+            desc       = request.form.get('description', '').strip()
+
+            if not payer or not amount_str or not bens_str:
+                errors = 'Płatnik, kwota i beneficjenci są wymagane.'
+            else:
+                try:
+                    amount = float(amount_str.replace(',', '.'))
+                    bens   = [b.strip() for b in bens_str.split(',') if b.strip()]
+                    transactions_col.insert_one({
+                        'payer': payer,
+                        'amount': amount,
+                        'beneficiaries': bens,
+                        'description': desc
+                    })
+                    return redirect(url_for('index'))
+                except ValueError:
+                    errors = 'Nieprawidłowa kwota.'
+
+        # 2) Wczytaj do edycji
+        elif action == 'edit':
+            edit_id = request.form.get('id')
+            if edit_id:
+                doc = transactions_col.find_one({'_id': ObjectId(edit_id)})
+                if doc:
+                    edit_tx = {
+                        'id': edit_id,
+                        'payer': doc.get('payer', ''),
+                        'amount': doc.get('amount', ''),
+                        'beneficiaries': ', '.join(doc.get('beneficiaries', [])),
+                        'description': doc.get('description', '')
+                    }
+                else:
+                    errors = 'Nie znaleziono transakcji.'
+
+        # 3) Zapisz zmiany
+        elif action == 'update':
+            edit_id    = request.form.get('id')
+            payer      = request.form.get('payer', '').strip()
+            amount_str = request.form.get('amount', '').strip()
+            bens_str   = request.form.get('beneficiaries', '').strip()
+            desc       = request.form.get('description', '').strip()
+
+            if not edit_id or not payer or not amount_str or not bens_str:
+                errors = 'Wszystkie pola są wymagane.'
+            else:
+                try:
+                    amount = float(amount_str.replace(',', '.'))
+                    bens   = [b.strip() for b in bens_str.split(',') if b.strip()]
+                    transactions_col.update_one(
+                        {'_id': ObjectId(edit_id)},
+                        {'$set': {
+                            'payer': payer,
+                            'amount': amount,
+                            'beneficiaries': bens,
+                            'description': desc
+                        }}
+                    )
+                    return redirect(url_for('index'))
+                except Exception:
+                    errors = 'Błąd podczas aktualizacji.'
+
+        # 4) Usuń
+        elif action == 'delete':
+            del_id = request.form.get('id')
+            if del_id:
+                transactions_col.delete_one({'_id': ObjectId(del_id)})
+                return redirect(url_for('index'))
+            else:
+                errors = 'Brak id do usunięcia.'
+
+        # 5) Oblicz
+        elif action == 'calculate':
+            data = fetch_transactions()
+            data_only = [{k: v for k, v in tx.items() if k != 'id'} for tx in data]
+            settlement_matrix = compute_settlement_matrix(data_only)
+
+        # 6) Resetuj
+        elif action == 'reset':
+            transactions_col.delete_many({})
+            return redirect(url_for('index'))
+
+        # 7) Import
+        elif action == 'import':
+            f = request.files.get('import_file')
+            if f:
+                try:
+                    imported = json.loads(f.read().decode('utf-8'))
+                    if isinstance(imported, list):
+                        transactions_col.delete_many({})
+                        for tx in imported:
+                            transactions_col.insert_one(tx)
+                        return redirect(url_for('index'))
+                    else:
+                        errors = 'Nieprawidłowy format JSON.'
+                except Exception as e:
+                    errors = f'Błąd importu: {e}'
+            else:
+                errors = 'Brak pliku do importu.'
+
+    # pobierz transakcje i renderuj
     transactions = fetch_transactions()
-    detailed    = get_detailed_settlement(transactions)
-    lodging     = get_lodging_summary(transactions)
-    positives   = sorted([p for p, d in detailed.items() if d['net'] > 0])
-    negatives   = sorted([p for p, d in detailed.items() if d['net'] < 0])
+    detailed     = get_detailed_settlement(transactions)
+    lodging      = get_lodging_summary(transactions)
+    positives    = sorted(p for p,d in detailed.items() if d['net']>0)
+    negatives    = sorted(p for p,d in detailed.items() if d['net']<0)
 
-    return render_template(
-        'index.html',
+    return render_template('index.html',
         transactions=transactions,
         settlement_matrix=settlement_matrix,
         detailed_settlement=detailed,
