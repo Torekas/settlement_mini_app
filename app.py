@@ -13,10 +13,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'C46ABA8FA628964A54B9D2B7A2E7Fo')
 # URI do MongoDB – najlepiej trzymać w zmiennej środowiskowej
 MONGODB_URI = os.getenv(
-    'MONGODB_URI'
+    'MONGODB_URI',
+    "mongodb+srv://janmichalak78:W9DJ4jAcjjVXFYPp@cluster0.gk8zvxq.mongodb.net/settlement_db?retryWrites=true&w=majority"
 )
 
 client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
