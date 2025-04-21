@@ -3,5 +3,7 @@ gunicorn==23.0.0
 dnspython==1.16.0
 flask-login==0.6.3
 pymongo[srv]==3.12
+python-dotenv==1.0.1
+
 
 
