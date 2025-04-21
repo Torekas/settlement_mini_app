@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pl">
+<head><meta charset="UTF-8"><title>Edytuj transakcję</title></head>
+<body>
+  <h1>Edytuj transakcję</h1>
+  <form method="post">
+    <label>Płatnik: <input name="payer" value="{{ tx.payer }}"></label><br>
+    <label>Kwota: <input name="amount" value="{{ tx.amount_str }}"></label><br>
+    <label>Beneficjenci: <input name="beneficiaries" value="{{ tx.beneficiaries_str }}"></label><br>
+    <label>Opis: <input name="description" value="{{ tx.description }}"></label><br>
+    <button type="submit">Zapisz</button>
+    <a href="{{ url_for('index') }}">Anuluj</a>
+  </form>
+</body>
+</html>

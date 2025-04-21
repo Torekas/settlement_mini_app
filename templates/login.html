@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Logowanie{% endblock %}
+{% block content %}
+  <div class="card mb-4 shadow-sm">
+    <div class="card-header">Logowanie</div>
+    <div class="card-body">
+      {% if errors %}<div class="alert alert-danger">{{ errors }}</div>{% endif %}
+      <form method="post" class="row g-3">
+        <div class="col-12">
+          <label for="username" class="form-label">Nazwa użytkownika</label>
+          <input type="text" class="form-control" id="username" name="username" required>
+        </div>
+        <div class="col-12">
+          <label for="password" class="form-label">Hasło</label>
+          <input type="password" class="form-control" id="password" name="password" required>
+        </div>
+        <div class="col-12">
+          <button type="submit" class="btn btn-primary">Zaloguj się</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
