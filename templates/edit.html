@@ -1,15 +1,32 @@
-<!doctype html>
-<html lang="pl">
-<head><meta charset="UTF-8"><title>Edytuj transakcję</title></head>
-<body>
-  <h1>Edytuj transakcję</h1>
-  <form method="post">
-    <label>Płatnik: <input name="payer" value="{{ tx.payer }}"></label><br>
-    <label>Kwota: <input name="amount" value="{{ tx.amount_str }}"></label><br>
-    <label>Beneficjenci: <input name="beneficiaries" value="{{ tx.beneficiaries_str }}"></label><br>
-    <label>Opis: <input name="description" value="{{ tx.description }}"></label><br>
-    <button type="submit">Zapisz</button>
-    <a href="{{ url_for('index') }}">Anuluj</a>
-  </form>
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}Edytuj transakcję{% endblock %}
+{% block content %}
+  <div class="card">
+    <div class="card-header"><i class="fa fa-edit"></i> Edytuj transakcję</div>
+    <div class="card-body">
+      <form method="post" class="row g-3">
+        <div class="col-md-4">
+          <label for="payer" class="form-label">Płatnik</label>
+          <input name="payer" id="payer" class="form-control" value="{{ tx.payer }}" required>
+        </div>
+        <div class="col-md-4">
+          <label for="amount" class="form-label">Kwota</label>
+          <input name="amount" id="amount" class="form-control" value="{{ tx.amount_str }}" required>
+        </div>
+        <div class="col-md-4">
+          <label for="beneficiaries" class="form-label">Beneficjenci</label>
+          <input name="beneficiaries" id="beneficiaries" class="form-control"
+                 value="{{ tx.beneficiaries_str }}" required>
+        </div>
+        <div class="col-12">
+          <label for="description" class="form-label">Opis</label>
+          <input name="description" id="description" class="form-control" value="{{ tx.description }}">
+        </div>
+        <div class="col-12 d-flex gap-2">
+          <button type="submit" class="btn btn-warning"><i class="fa fa-save"></i> Zapisz</button>
+          <a href="{{ url_for('index') }}" class="btn btn-secondary"><i class="fa fa-ban"></i> Anuluj</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
