@@ -1,5 +1,3 @@
-from currex import Currency
-
 import os
 import json
 import io
@@ -11,33 +9,19 @@ from collections import defaultdict
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
-# If using .env, load it
 load_dotenv()
-
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'C46ABA8FA628964A54B9D2B7A2E7Fo')
-
 MONGODB_URI = os.getenv(
     'MONGODB_URI',
     "mongodb+srv://janmichalak78:W9DJ4jAcjjVXFYPp@cluster0.gk8zvxq.mongodb.net/settlement_db?retryWrites=true&w=majority"
 )
-
 client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
 db = client['settlement_db']
 transactions_col = db['transactions']
 users_col = db['users']
 
-CURRENCIES = ['PLN', 'EUR', 'USD', 'NOK', 'SEK', 'GBP', 'CHF', 'CZK']
-
-def convert(amount, from_cur, to_cur):
-    try:
-        if from_cur == to_cur:
-            return float(amount)
-        money = Currency(from_cur, float(amount))
-        converted = money.to(to_cur)
-        return float(converted.amount)
-    except Exception:
-        return float(amount) if from_cur == to_cur else None
+SUPPORTED_CURRENCIES = ["PLN", "EUR", "USD", "NOK", "GBP", "CZK", "CHF", "SEK", "DKK"]
 
 def login_required(f):
     @wraps(f)
@@ -49,70 +33,71 @@ def login_required(f):
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    errors = None
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         if not username or not password:
-            errors = 'Nazwa użytkownika i hasło są wymagane.'
+            flash('Nazwa użytkownika i hasło są wymagane.', 'danger')
         elif users_col.find_one({'username': username}):
-            errors = 'Użytkownik już istnieje.'
+            flash('Użytkownik już istnieje.', 'danger')
         else:
             pw_hash = generate_password_hash(password)
-            users_col.insert_one({'username': username, 'password': pw_hash})
-            flash('Rejestracja zakończona sukcesem. Możesz się zalogować.', 'success')
+            users_col.insert_one({
+                'username': username,
+                'password': pw_hash,
+                'main_currency': "PLN",
+                'currency_rates': {"PLN": 1.0, "EUR": 4.0, "USD": 3.8}
+            })
+            flash('Rejestracja zakończona sukcesem! Zaloguj się.', 'success')
             return redirect(url_for('login'))
-    return render_template('register.html', errors=errors)
+    return render_template('register.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    errors = None
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         user = users_col.find_one({'username': username})
         if not user or not check_password_hash(user['password'], password):
-            errors = 'Nieprawidłowe dane logowania.'
+            flash('Nieprawidłowe dane logowania.', 'danger')
         else:
             session['user_id'] = str(user['_id'])
             session['username'] = username
-            if 'main_currency' not in session:
-                session['main_currency'] = 'PLN'
-            flash('Zalogowano pomyślnie.', 'success')
+            flash(f'Witaj, {username}!', 'success')
             return redirect(url_for('index'))
-    return render_template('login.html', errors=errors)
+    return render_template('login.html')
 
 @app.route('/logout')
 def logout():
     session.clear()
-    flash('Wylogowano pomyślnie.', 'info')
+    flash('Wylogowano.', 'info')
     return redirect(url_for('login'))
 
-def fetch_transactions(main_currency=None):
-    docs = list(transactions_col.find())
+def get_user():
+    return users_col.find_one({'_id': ObjectId(session['user_id'])})
+
+def fetch_transactions(user_id):
+    docs = list(transactions_col.find({'user_id': user_id}))
     txs = []
     for d in docs:
-        amount = float(d.get('amount', 0))
-        currency = d.get('currency', 'PLN')
-        if not main_currency:
-            main_currency = session.get('main_currency', 'PLN')
-        converted = convert(amount, currency, main_currency)
-        beneficiaries = d.get('beneficiaries', [])
-        if isinstance(beneficiaries, str):
-            beneficiaries = [b.strip() for b in beneficiaries.split(',') if b.strip()]
         txs.append({
             'id': str(d['_id']),
             'payer': d.get('payer', ''),
-            'amount': amount,
-            'currency': currency,
-            'amount_converted': round(converted if converted is not None else 0.0, 2),
-            'beneficiaries': ', '.join(beneficiaries),
-            'beneficiaries_raw': beneficiaries,
+            'amount': d.get('amount', 0),
+            'currency': d.get('currency', 'PLN'),
+            'beneficiaries': d.get('beneficiaries', []),
             'description': d.get('description', '')
         })
     return txs
 
-def compute_settlement_matrix(transactions):
+def convert(amount, from_cur, to_cur, rates):
+    if from_cur == to_cur:
+        return amount
+    if from_cur not in rates or to_cur not in rates:
+        raise Exception(f"Brak kursu dla {from_cur} lub {to_cur}")
+    return amount * rates[from_cur] / rates[to_cur]
+
+def compute_settlement_matrix(transactions, main_currency, rates):
     people = set()
     for item in transactions:
         people.add(item["payer"])
@@ -125,10 +110,12 @@ def compute_settlement_matrix(transactions):
         amt = float(item.get("amount", 0))
         payer = item["payer"]
         bens = item.get("beneficiaries", [])
+        tx_cur = item.get("currency", main_currency)
+        amt_conv = convert(amt, tx_cur, main_currency, rates)
         if not bens:
             continue
-        share = amt / len(bens)
-        paid[payer] += amt
+        share = amt_conv / len(bens)
+        paid[payer] += amt_conv
         for b in bens:
             owes[b] += share
     net = {p: paid[p] - owes[p] for p in people}
@@ -143,19 +130,21 @@ def compute_settlement_matrix(transactions):
             matrix[deb][cred] = round(share, 2)
     return matrix
 
-def get_detailed_settlement(transactions):
+def get_detailed_settlement(transactions, main_currency, rates):
     paid = defaultdict(float)
     owes = defaultdict(float)
     people = set()
     for t in transactions:
         payer = t.get('payer')
         amount = float(t.get('amount', 0))
+        tx_cur = t.get('currency', main_currency)
+        amount_conv = convert(amount, tx_cur, main_currency, rates)
         bens = t.get('beneficiaries', [])
         people.add(payer)
         for b in bens:
             people.add(b)
-        share = amount / len(bens) if bens else 0
-        paid[payer] += amount
+        share = amount_conv / len(bens) if bens else 0
+        paid[payer] += amount_conv
         for b in bens:
             owes[b] += share
     detailed = {}
@@ -167,14 +156,16 @@ def get_detailed_settlement(transactions):
         }
     return detailed
 
-def get_lodging_summary(transactions):
+def get_lodging_summary(transactions, main_currency, rates):
     summary = {}
     for tx in transactions:
         if 'nocleg' in tx.get('description', '').lower():
             amount = float(tx.get('amount', 0))
+            tx_cur = tx.get('currency', main_currency)
+            amount_conv = convert(amount, tx_cur, main_currency, rates)
             bens = tx.get('beneficiaries', [])
             if bens:
-                share = amount / len(bens)
+                share = amount_conv / len(bens)
                 for b in bens:
                     summary[b] = summary.get(b, 0) + share
     return {k: round(v, 2) for k, v in summary.items()}
@@ -182,45 +173,44 @@ def get_lodging_summary(transactions):
 @app.route('/', methods=['GET', 'POST'])
 @login_required
 def index():
-    settlement_matrix = None
-    errors = None
+    user = get_user()
+    if not user:
+        flash('Nie znaleziono użytkownika.', 'danger')
+        return redirect(url_for('login'))
+
     edit_id = None
     edit_tx = None
-    if 'main_currency' not in session:
-        session['main_currency'] = 'PLN'
-    main_currency = session['main_currency']
-    currencies = CURRENCIES
+
+    main_currency = user.get('main_currency', 'PLN')
+    currency_rates = user.get('currency_rates', {"PLN": 1.0})
+    download_currency = main_currency
+
     if request.method == 'POST':
         action = request.form.get('action')
-        if action == 'set_main_currency':
-            new_main = request.form.get('main_currency')
-            if new_main in currencies:
-                session['main_currency'] = new_main
-                flash(f'Ustawiono walutę główną na {new_main}.', 'info')
-                return redirect(url_for('index'))
         if action == 'add':
-            payer      = request.form.get('payer', '').strip()
-            amount_str = request.form.get('amount', '').strip().replace(',', '.')
-            currency   = request.form.get('currency', main_currency)
-            bens_str   = request.form.get('beneficiaries', '').strip()
-            desc       = request.form.get('description', '').strip()
-            if not payer or not amount_str or not bens_str or not currency:
-                errors = 'Płatnik, kwota, waluta i beneficjenci są wymagane.'
+            payer = request.form.get('payer', '').strip()
+            amount_str = request.form.get('amount', '').strip()
+            bens_str = request.form.get('beneficiaries', '').strip()
+            desc = request.form.get('description', '').strip()
+            tx_cur = request.form.get('currency', main_currency)
+            if not payer or not amount_str or not bens_str or not tx_cur:
+                flash('Płatnik, kwota, beneficjenci i waluta są wymagane.', 'danger')
             else:
                 try:
-                    amount = float(amount_str)
-                    bens   = [b.strip() for b in bens_str.split(',') if b.strip()]
+                    amount = float(amount_str.replace(',', '.'))
+                    bens = [b.strip() for b in bens_str.split(',') if b.strip()]
                     transactions_col.insert_one({
+                        'user_id': session['user_id'],
                         'payer': payer,
                         'amount': amount,
-                        'currency': currency,
+                        'currency': tx_cur,
                         'beneficiaries': bens,
                         'description': desc
                     })
-                    flash('Transakcja została dodana.', 'success')
+                    flash('Dodano transakcję!', 'success')
                     return redirect(url_for('index'))
-                except ValueError:
-                    errors = 'Nieprawidłowa kwota.'
+                except Exception:
+                    flash('Nieprawidłowa kwota.', 'danger')
         elif action == 'edit':
             edit_id = request.form.get('id')
             if edit_id:
@@ -235,57 +225,76 @@ def index():
                         'description': doc.get('description', '')
                     }
                 else:
-                    errors = 'Nie znaleziono transakcji.'
+                    flash('Nie znaleziono transakcji.', 'danger')
         elif action == 'update':
-            edit_id    = request.form.get('id')
-            payer      = request.form.get('payer', '').strip()
-            amount_str = request.form.get('amount', '').strip().replace(',', '.')
-            currency   = request.form.get('currency', main_currency)
-            bens_str   = request.form.get('beneficiaries', '').strip()
-            desc       = request.form.get('description', '').strip()
-            if not edit_id or not payer or not amount_str or not bens_str or not currency:
-                errors = 'Wszystkie pola są wymagane.'
+            edit_id = request.form.get('id')
+            payer = request.form.get('payer', '').strip()
+            amount_str = request.form.get('amount', '').strip()
+            bens_str = request.form.get('beneficiaries', '').strip()
+            desc = request.form.get('description', '').strip()
+            tx_cur = request.form.get('currency', main_currency)
+            if not edit_id or not payer or not amount_str or not bens_str or not tx_cur:
+                flash('Wszystkie pola są wymagane.', 'danger')
             else:
                 try:
-                    amount = float(amount_str)
-                    bens   = [b.strip() for b in bens_str.split(',') if b.strip()]
+                    amount = float(amount_str.replace(',', '.'))
+                    bens = [b.strip() for b in bens_str.split(',') if b.strip()]
                     transactions_col.update_one(
                         {'_id': ObjectId(edit_id)},
                         {'$set': {
                             'payer': payer,
                             'amount': amount,
-                            'currency': currency,
+                            'currency': tx_cur,
                             'beneficiaries': bens,
                             'description': desc
                         }}
                     )
-                    flash('Transakcja została zaktualizowana.', 'success')
+                    flash('Zaktualizowano transakcję.', 'success')
                     return redirect(url_for('index'))
                 except Exception:
-                    errors = 'Błąd podczas aktualizacji.'
+                    flash('Błąd podczas aktualizacji.', 'danger')
         elif action == 'delete':
             del_id = request.form.get('id')
             if del_id:
                 transactions_col.delete_one({'_id': ObjectId(del_id)})
-                flash('Transakcja została usunięta.', 'warning')
+                flash('Usunięto transakcję.', 'info')
                 return redirect(url_for('index'))
             else:
-                errors = 'Brak id do usunięcia.'
+                flash('Brak id do usunięcia.', 'danger')
+        elif action == 'set_main_currency':
+            new_main = request.form.get('main_currency')
+            if new_main and new_main in currency_rates:
+                users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'main_currency': new_main}})
+                flash(f'Zmieniono walutę główną na {new_main}.', 'success')
+                main_currency = new_main
+            else:
+                flash("Brak kursu dla tej waluty – najpierw ustaw kurs!", 'danger')
+        elif action == 'set_rate':
+            cur = request.form.get('currency_code', '').upper()
+            val = request.form.get('currency_value', '')
+            try:
+                val = float(val.replace(',', '.'))
+                if cur and val > 0:
+                    currency_rates[cur] = val
+                    users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'currency_rates': currency_rates}})
+                    flash(f'Ustawiono kurs {cur}: {val}', 'success')
+                else:
+                    flash("Nieprawidłowy kod waluty lub wartość.", 'danger')
+            except Exception:
+                flash("Nieprawidłowa wartość kursu.", 'danger')
+        elif action == 'del_rate':
+            cur = request.form.get('del_currency_code', '').upper()
+            if cur in currency_rates and cur != main_currency:
+                currency_rates.pop(cur)
+                users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'currency_rates': currency_rates}})
+                flash(f'Usunięto kurs waluty {cur}.', 'info')
+            else:
+                flash("Nie można usunąć tej waluty lub jest ona walutą główną.", 'danger')
         elif action == 'calculate':
-            txs = fetch_transactions(main_currency)
-            data_only = []
-            for tx in txs:
-                data_only.append({
-                    'payer': tx['payer'],
-                    'amount': tx['amount_converted'],
-                    'beneficiaries': tx['beneficiaries_raw'],
-                    'description': tx['description']
-                })
-            settlement_matrix = compute_settlement_matrix(data_only)
             flash('Obliczono rozliczenie.', 'info')
         elif action == 'reset':
-            transactions_col.delete_many({})
-            flash('Wyczyszczono wszystkie transakcje.', 'danger')
+            transactions_col.delete_many({'user_id': session['user_id']})
+            flash('Wyczyszczono wszystkie transakcje.', 'warning')
             return redirect(url_for('index'))
         elif action == 'import':
             f = request.files.get('import_file')
@@ -293,32 +302,46 @@ def index():
                 try:
                     imported = json.loads(f.read().decode('utf-8'))
                     if isinstance(imported, list):
-                        transactions_col.delete_many({})
+                        transactions_col.delete_many({'user_id': session['user_id']})
                         for tx in imported:
-                            if 'currency' not in tx or tx['currency'] not in currencies:
+                            tx['user_id'] = session['user_id']
+                            if 'currency' not in tx:
                                 tx['currency'] = main_currency
                             transactions_col.insert_one(tx)
-                        flash('Zaimportowano plik transakcji.', 'success')
+                        flash('Zaimportowano transakcje.', 'success')
                         return redirect(url_for('index'))
                     else:
-                        errors = 'Nieprawidłowy format JSON.'
+                        flash('Nieprawidłowy format JSON.', 'danger')
                 except Exception as e:
-                    errors = f'Błąd importu: {e}'
+                    flash(f'Błąd importu: {e}', 'danger')
             else:
-                errors = 'Brak pliku do importu.'
-    transactions = fetch_transactions(main_currency)
-    data_for_calc = []
-    for tx in transactions:
-        data_for_calc.append({
-            'payer': tx['payer'],
-            'amount': tx['amount_converted'],
-            'beneficiaries': [b.strip() for b in tx['beneficiaries'].split(',') if b.strip()],
-            'description': tx['description']
-        })
-    detailed     = get_detailed_settlement(data_for_calc)
-    lodging      = get_lodging_summary(data_for_calc)
-    positives    = sorted(p for p,d in detailed.items() if d['net']>0)
-    negatives    = sorted(p for p,d in detailed.items() if d['net']<0)
+                flash('Brak pliku do importu.', 'danger')
+        elif action == 'set_download_currency':
+            download_currency = request.form.get('download_currency', main_currency)
+
+    user = get_user()
+    main_currency = user.get('main_currency', 'PLN')
+    currency_rates = user.get('currency_rates', {"PLN": 1.0})
+    download_currency = request.form.get('download_currency', main_currency)
+
+    transactions = fetch_transactions(session['user_id'])
+    try:
+        settlement_matrix = compute_settlement_matrix(transactions, main_currency, currency_rates)
+        detailed = get_detailed_settlement(transactions, main_currency, currency_rates)
+        lodging = get_lodging_summary(transactions, main_currency, currency_rates)
+        positives = sorted(p for p, d in detailed.items() if d['net'] > 0)
+        negatives = sorted(p for p, d in detailed.items() if d['net'] < 0)
+    except Exception as e:
+        flash(str(e), 'danger')
+        settlement_matrix = None
+        detailed = {}
+        lodging = {}
+        positives = []
+        negatives = []
+
+    available_currencies = list(currency_rates.keys())
+    download_currency = download_currency if download_currency in available_currencies else main_currency
+
     return render_template('index.html',
         transactions=transactions,
         settlement_matrix=settlement_matrix,
@@ -326,39 +349,47 @@ def index():
         lodging_summary=lodging,
         positives=positives,
         negatives=negatives,
-        errors=errors,
         edit_id=edit_id,
         edit_transaction=edit_tx,
-        currencies=currencies,
-        main_currency=main_currency
+        main_currency=main_currency,
+        currency_rates=currency_rates,
+        supported_currencies=SUPPORTED_CURRENCIES,
+        available_currencies=available_currencies,
+        download_currency=download_currency
     )
 
-@app.route('/download', methods=['GET'])
+@app.route('/download', methods=['GET', 'POST'])
 @login_required
 def download():
-    currencies = CURRENCIES
-    download_currency = request.args.get('download_currency') or session.get('main_currency', 'PLN')
-    if download_currency not in currencies:
-        download_currency = 'PLN'
-    txs = fetch_transactions(download_currency)
+    user = get_user()
+    main_currency = user.get('main_currency', 'PLN')
+    currency_rates = user.get('currency_rates', {"PLN": 1.0})
+    download_currency = request.args.get('currency') or request.form.get('download_currency') or main_currency
+    docs = list(transactions_col.find({'user_id': session['user_id']}))
     out = []
-    for tx in txs:
+    for d in docs:
+        amt = float(d.get('amount', 0))
+        from_cur = d.get('currency', main_currency)
+        to_cur = download_currency
+        try:
+            conv_amt = convert(amt, from_cur, to_cur, currency_rates)
+        except Exception:
+            conv_amt = amt
         out.append({
-            'payer': tx['payer'],
-            'amount': tx['amount_converted'],
-            'currency': download_currency,
-            'beneficiaries': [b.strip() for b in tx['beneficiaries'].split(',') if b.strip()],
-            'description': tx['description']
+            'payer': d.get('payer', ''),
+            'amount': round(conv_amt, 2),
+            'currency': to_cur,
+            'beneficiaries': d.get('beneficiaries', []),
+            'description': d.get('description', '')
         })
-    filename = f'transactions_{download_currency}.json'
     buf = io.BytesIO(json.dumps(out, ensure_ascii=False, indent=2).encode('utf-8'))
     buf.seek(0)
-    flash(f'Pobrano plik rozliczenia w walucie {download_currency}.', 'info')
+    flash(f'Pobrano dane w walucie {download_currency}.', 'info')
     return send_file(
         buf,
         mimetype='application/json',
         as_attachment=True,
-        download_name=filename
+        download_name=f'transactions_{download_currency}.json'
     )
 
 if __name__ == '__main__':

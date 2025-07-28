@@ -1,12 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Rejestracja{% endblock %}
 {% block content %}
-  <div class="card">
-    <div class="card-header"><i class="fa fa-user-plus"></i> Rejestracja</div>
+  <div class="card shadow">
+    <div class="card-header"><i class="fa-solid fa-user-plus"></i> Rejestracja</div>
     <div class="card-body">
-      {% if errors %}
-        <div class="alert alert-danger"><i class="fa fa-exclamation-circle"></i> {{ errors }}</div>
-      {% endif %}
+      {% if errors %}<div class="alert alert-danger">{{ errors }}</div>{% endif %}
       <form method="post" class="row g-3">
         <div class="col-12">
           <label for="username" class="form-label">Nazwa użytkownika</label>
@@ -17,9 +15,7 @@
           <input type="password" class="form-control" id="password" name="password" required>
         </div>
         <div class="col-12">
-          <button type="submit" class="btn btn-success">
-            <i class="fa fa-user-plus"></i> Zarejestruj się
-          </button>
+          <button type="submit" class="btn btn-success"><i class="fa-solid fa-user-plus"></i> Zarejestruj się</button>
         </div>
       </form>
     </div>

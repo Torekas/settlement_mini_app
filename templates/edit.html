@@ -1,30 +1,29 @@
 {% extends "base.html" %}
 {% block title %}Edytuj transakcję{% endblock %}
 {% block content %}
-  <div class="card">
-    <div class="card-header"><i class="fa fa-edit"></i> Edytuj transakcję</div>
+  <div class="card shadow">
+    <div class="card-header"><i class="fa-solid fa-pen"></i> Edytuj transakcję</div>
     <div class="card-body">
       <form method="post" class="row g-3">
         <div class="col-md-4">
           <label for="payer" class="form-label">Płatnik</label>
-          <input name="payer" id="payer" class="form-control" value="{{ tx.payer }}" required>
+          <input type="text" class="form-control" id="payer" name="payer" value="{{ tx.payer }}">
         </div>
         <div class="col-md-4">
           <label for="amount" class="form-label">Kwota</label>
-          <input name="amount" id="amount" class="form-control" value="{{ tx.amount_str }}" required>
+          <input type="text" class="form-control" id="amount" name="amount" value="{{ tx.amount_str }}">
         </div>
-        <div class="col-md-4">
-          <label for="beneficiaries" class="form-label">Beneficjenci</label>
-          <input name="beneficiaries" id="beneficiaries" class="form-control"
-                 value="{{ tx.beneficiaries_str }}" required>
+        <div class="col-md-8">
+          <label for="beneficiaries" class="form-label">Beneficjenci (oddzieleni przecinkiem)</label>
+          <input type="text" class="form-control" id="beneficiaries" name="beneficiaries" value="{{ tx.beneficiaries_str }}">
+        </div>
+        <div class="col-md-12">
+          <label for="description" class="form-label">Opis</label>
+          <input type="text" class="form-control" id="description" name="description" value="{{ tx.description }}">
         </div>
         <div class="col-12">
-          <label for="description" class="form-label">Opis</label>
-          <input name="description" id="description" class="form-control" value="{{ tx.description }}">
-        </div>
-        <div class="col-12 d-flex gap-2">
-          <button type="submit" class="btn btn-warning"><i class="fa fa-save"></i> Zapisz</button>
-          <a href="{{ url_for('index') }}" class="btn btn-secondary"><i class="fa fa-ban"></i> Anuluj</a>
+          <button type="submit" class="btn btn-warning"><i class="fa-solid fa-check"></i> Zapisz</button>
+          <a href="{{ url_for('index') }}" class="btn btn-secondary"><i class="fa-solid fa-xmark"></i> Anuluj</a>
         </div>
       </form>
     </div>

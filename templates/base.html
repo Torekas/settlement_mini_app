@@ -7,117 +7,145 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
   <style>
-    body { padding-top: 80px; background: #f6f9fc; }
-    .container { max-width: 1050px; }
+    body {
+      padding-top: 80px;
+      background: linear-gradient(135deg, #eef2f7 60%, #c6dbfc 100%);
+      min-height: 100vh;
+    }
+    .container { max-width: 1100px; }
+    .navbar-brand i { margin-right: 8px; font-size: 1.5rem; }
+    .card {
+      border-radius: 1rem;
+      box-shadow: 0 4px 16px rgba(0, 36, 84, 0.07);
+      border: none;
+      margin-bottom: 32px;
+    }
     .card-header {
-      background: linear-gradient(90deg, #3a7bd5 0%, #0d6efd 100%);
+      background: linear-gradient(90deg, #3494e6 0%, #1e61b9 100%);
       color: #fff;
       font-weight: 600;
-      font-size: 1.1rem;
+      font-size: 1.2rem;
       letter-spacing: .5px;
       border-bottom: none;
-      box-shadow: 0 2px 10px rgba(13,110,253,0.03);
+      border-radius: 1rem 1rem 0 0;
+      display: flex;
+      align-items: center;
+      gap: 0.7em;
     }
     .table th, .table td { vertical-align: middle; text-align: center; }
-    .btn-info, .btn-danger, .btn-warning, .btn-secondary { margin-right: 6px; }
     .form-label { font-weight: 500; }
-    .navbar { box-shadow: 0 2px 8px rgba(13,110,253,0.07); }
-    footer {
-      margin-top: 50px; padding: 18px 0; background: #0d6efd; color: #fff; text-align: center;
-      letter-spacing: .7px; font-size: 1rem;
-      border-radius: 12px 12px 0 0;
+    .btn-info, .btn-danger, .btn-warning, .btn-secondary { margin-right: 5px; }
+    .form-select, .form-control { border-radius: 0.7em; }
+    .alert {
+      font-size: 1.1rem;
+      font-weight: 500;
+      letter-spacing: 0.2px;
+      border-radius: 0.7em;
+      box-shadow: 0 2px 8px rgba(52, 148, 230, 0.09);
     }
-    .card { border-radius: 16px; box-shadow: 0 4px 18px rgba(13,110,253,0.06); }
-    .card:not(:last-child) { margin-bottom: 32px; }
-    .fa { margin-right: 8px; }
-    .form-select, .form-control { border-radius: 8px; }
-    .table thead { background-color: #e9ecef; }
-    .table-responsive { border-radius: 10px; }
-    .small-desc { font-size: 0.95em; color: #7b8ab8; }
-    .form-section { margin-bottom: 1.2em; }
-    .nav-link.active, .nav-link:focus { font-weight: bold; }
+    footer {
+      margin-top: 40px;
+      padding: 16px 0;
+      background: linear-gradient(90deg, #3494e6 0%, #1e61b9 100%);
+      color: #fff;
+      text-align: center;
+      border-radius: 1rem 1rem 0 0;
+      font-weight: 500;
+      letter-spacing: 1px;
+      box-shadow: 0 -2px 12px rgba(52, 148, 230, 0.07);
+    }
+    .table tr:hover { background: #f3f7fb; }
+    .icon-btn {
+      padding: 4px 8px;
+      font-size: 1rem;
+      border-radius: 0.5em;
+    }
+    /* TOAST styles */
+    .custom-toast-container {
+      position: fixed;
+      left: 50%;
+      top: 40px;
+      transform: translateX(-50%);
+      z-index: 1080;
+      min-width: 320px;
+      max-width: 95vw;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      pointer-events: none;
+    }
+    .custom-toast {
+      min-width: 320px;
+      max-width: 600px;
+      margin-bottom: 12px;
+      opacity: 0.97;
+      box-shadow: 0 6px 32px rgba(0,0,0,0.16);
+      border-radius: 0.8em;
+      pointer-events: auto;
+    }
   </style>
 </head>
 <body>
-  <!-- Toast center-top overlay -->
-  <div aria-live="polite" aria-atomic="true"
-       class="position-fixed start-50 translate-middle-x pt-3"
-       style="top: 0; z-index: 2000; min-width:350px; pointer-events:none; width:100%;">
-    <div id="toast-container" style="pointer-events:auto; display: flex; justify-content: center;">
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% for category, message in messages %}
-          <div class="toast show align-items-center text-bg-{{ 'danger' if category=='error' else category }} border-0 mb-2"
-               role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="3000"
-               style="
-                  font-size:1.15rem;
-                  box-shadow:0 8px 28px 2px rgba(0,0,0,0.27);
-                  background:rgba(40,40,40,0.96);
-                  border-radius:15px;
-                  min-width:350px;
-                  max-width:90vw;
-                  margin: 0 auto;
-               ">
-            <div class="d-flex">
-              <div class="toast-body w-100 text-center" style="color:white;">
-                {{ message }}
-              </div>
-              <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Zamknij"></button>
-            </div>
-          </div>
-        {% endfor %}
-      {% endwith %}
-    </div>
-  </div>
-
-  <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top shadow-sm">
     <div class="container">
-      <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
-        <i class="fa fa-calculator"></i> Kalkulator rozliczeń
+      <a class="navbar-brand" href="{{ url_for('index') }}">
+        <i class="fa-solid fa-calculator"></i> Kalkulator rozliczeń
       </a>
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarContent">
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="navbarContent">
-        <ul class="navbar-nav ms-auto">
+        <ul class="navbar-nav ms-auto align-items-center">
           {% if session.username %}
-            <li class="nav-item">
-              <span class="nav-link active">
-                <i class="fa fa-user"></i>Zalogowany jako <strong>{{ session.username }}</strong>
-              </span>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('logout') }}"><i class="fa fa-sign-out-alt"></i>Wyloguj</a>
-            </li>
+            <li class="nav-item"><span class="nav-link disabled">👤 {{ session.username }}</span></li>
+            <li class="nav-item"><a class="nav-link" href="{{ url_for('logout') }}"><i class="fa-solid fa-right-from-bracket"></i> Wyloguj</a></li>
           {% else %}
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('login') }}"><i class="fa fa-sign-in-alt"></i>Logowanie</a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="{{ url_for('register') }}"><i class="fa fa-user-plus"></i>Rejestracja</a>
-            </li>
+            <li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}"><i class="fa-solid fa-right-to-bracket"></i> Logowanie</a></li>
+            <li class="nav-item"><a class="nav-link" href="{{ url_for('register') }}"><i class="fa-solid fa-user-plus"></i> Rejestracja</a></li>
           {% endif %}
-          <li class="nav-item">
-            <a class="btn btn-secondary ms-3" href="https://trip-app-p4gc.onrender.com" target="_blank" rel="noopener">
-              <i class="fa fa-map"></i> Trip App
+          <li class="nav-item ms-3">
+            <a class="btn btn-secondary" href="https://trip-app-p4gc.onrender.com" target="_blank" rel="noopener noreferrer">
+              <i class="fa-solid fa-map-location-dot"></i> Trip App
             </a>
           </li>
         </ul>
       </div>
     </div>
   </nav>
-  <div class="container my-4">
-    {% block content %}{% endblock %}
+
+  <!-- TOASTS (pop-up powiadomienia) -->
+  <div class="custom-toast-container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+        <div class="toast align-items-center show custom-toast bg-{{ 'danger' if category=='error' else category }}" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="3000">
+          <div class="d-flex">
+            <div class="toast-body fw-semibold fs-6">
+              {% if category=='success' %}<i class="fa-solid fa-circle-check text-success me-2"></i>{% endif %}
+              {% if category=='error' or category=='danger' %}<i class="fa-solid fa-circle-xmark text-danger me-2"></i>{% endif %}
+              {% if category=='info' %}<i class="fa-solid fa-circle-info text-primary me-2"></i>{% endif %}
+              {% if category=='warning' %}<i class="fa-solid fa-triangle-exclamation text-warning me-2"></i>{% endif %}
+              {{ message }}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
   </div>
+
+  <div class="container my-4">{% block content %}{% endblock %}</div>
   <footer>
     <div class="container">&copy; 2025 Kalkulator rozliczeń grupowych</div>
   </footer>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    document.addEventListener("DOMContentLoaded", function() {
-      document.querySelectorAll('.toast').forEach(function(toastEl) {
-        var toast = new bootstrap.Toast(toastEl)
-        toast.show()
+    // Autohide all Bootstrap toasts after 3 seconds
+    window.addEventListener('DOMContentLoaded', () => {
+      const toastElList = [].slice.call(document.querySelectorAll('.toast'));
+      toastElList.forEach(function(toastEl) {
+        const bsToast = new bootstrap.Toast(toastEl, { delay: 3000 });
+        bsToast.show();
       });
     });
   </script>

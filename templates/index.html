@@ -1,90 +1,119 @@
 {% extends "base.html" %}
-{% block title %}Rozliczenia grupowe{% endblock %}
+{% block title %}Kalkulator rozliczeń - Strona główna{% endblock %}
 {% block content %}
 
-<!-- WYBÓR WALUTY GŁÓWNEJ -->
-<div class="card">
+<!-- Powiadomienia -->
+{% if errors %}
+  <div class="alert alert-danger text-center mt-3">{{ errors }}</div>
+{% endif %}
+
+<!-- Ustawienia walut i kursów -->
+<div class="card shadow">
   <div class="card-header">
-    <i class="fa fa-coins"></i> Waluta główna rozliczenia
-    <div class="small-desc">Wszystkie kwoty są przeliczane na tę walutę (możesz ją zmienić w każdej chwili)</div>
+    <i class="fa-solid fa-coins"></i> Ustawienia walut i kursów
   </div>
   <div class="card-body">
-    <form method="post" class="row g-3 align-items-end">
-      <div class="col-md-6">
-        <label for="main_currency" class="form-label">Wybierz walutę główną:</label>
-        <select class="form-select" id="main_currency" name="main_currency" required>
-          {% for cur in currencies %}
+    <form method="post" class="row g-2 align-items-end mb-2">
+      <div class="col-md-4">
+        <label class="form-label">Waluta główna:</label>
+        <select name="main_currency" class="form-select">
+          {% for cur in available_currencies %}
             <option value="{{ cur }}" {% if cur == main_currency %}selected{% endif %}>{{ cur }}</option>
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-6">
-        <button type="submit" name="action" value="set_main_currency" class="btn btn-primary">
-          <i class="fa fa-check-circle"></i> Ustaw walutę główną
-        </button>
+      <div class="col-md-2">
+        <button type="submit" name="action" value="set_main_currency" class="btn btn-primary w-100">Ustaw jako główną</button>
       </div>
     </form>
-  </div>
-</div>
-
-<!-- Dodawanie / edycja transakcji -->
-<div class="card">
-  <div class="card-header">
-    {% if edit_transaction %} <i class="fa fa-edit"></i> Edytuj transakcję {% else %} <i class="fa fa-plus"></i> Dodaj transakcję {% endif %}
-    <div class="small-desc">Uzupełnij dane, aby dodać wydatek do rozliczenia grupowego</div>
-  </div>
-  <div class="card-body">
-    {% if errors %}
-      <div class="alert alert-danger"><i class="fa fa-exclamation-circle"></i> {{ errors }}</div>
-    {% endif %}
-    <form method="post" enctype="multipart/form-data" class="row g-3">
+    <form method="post" class="row g-2 align-items-end mb-1">
       <div class="col-md-3">
-        <label for="payer" class="form-label">Płatnik</label>
-        <input type="text" class="form-control" id="payer" name="payer"
-               value="{{ edit_transaction.payer if edit_transaction }}" required placeholder="np. Jan">
-      </div>
-      <div class="col-md-3">
-        <label for="amount" class="form-label">Kwota</label>
-        <input type="text" class="form-control" id="amount" name="amount"
-               value="{{ edit_transaction.amount if edit_transaction }}" required placeholder="np. 120.00">
-      </div>
-      <div class="col-md-3">
-        <label for="currency" class="form-label">Waluta</label>
-        <select class="form-select" id="currency" name="currency" required>
-          {% for cur in currencies %}
-            <option value="{{ cur }}"
-              {% if edit_transaction and edit_transaction.currency == cur %}
-                selected
-              {% elif not edit_transaction and cur == main_currency %}
-                selected
-              {% endif %}
-            >{{ cur }}</option>
+        <label class="form-label">Nowa waluta:</label>
+        <select name="currency_code" class="form-select">
+          {% for cur in supported_currencies %}
+            <option value="{{ cur }}">{{ cur }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-md-3">
-        <label for="beneficiaries" class="form-label">Beneficjenci <span class="small-desc">(np. Jan, Kasia, Marek)</span></label>
+        <label class="form-label">Kurs (ile 1 {{ main_currency }} = ? wybranej):</label>
+        <input type="text" name="currency_value" class="form-control" placeholder="np. 4.32">
+      </div>
+      <div class="col-md-2">
+        <button type="submit" name="action" value="set_rate" class="btn btn-success w-100">Dodaj/zmień kurs</button>
+      </div>
+    </form>
+    <div class="mt-3">
+      <b>Twoje kursy walut:</b>
+      <table class="table table-bordered table-sm align-middle" style="max-width: 400px;">
+        <thead>
+          <tr><th>Waluta</th><th>Kurs</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for cur, val in currency_rates.items() %}
+          <tr>
+            <td>{{ cur }}</td>
+            <td>{{ val }}</td>
+            <td>
+              {% if cur != main_currency %}
+              <form method="post" style="display:inline;">
+                <input type="hidden" name="del_currency_code" value="{{ cur }}">
+                <button type="submit" name="action" value="del_rate" class="btn btn-sm btn-danger icon-btn" title="Usuń">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Dodawanie / edycja transakcji -->
+<div class="card shadow">
+  <div class="card-header">
+    <i class="fa-solid fa-plus"></i> {% if edit_transaction %} Edytuj transakcję {% else %} Dodaj transakcję {% endif %}
+  </div>
+  <div class="card-body">
+    <form method="post" enctype="multipart/form-data" class="row g-3">
+      <div class="col-md-3">
+        <label for="payer" class="form-label">Płatnik</label>
+        <input type="text" class="form-control" id="payer" name="payer"
+               value="{{ edit_transaction.payer if edit_transaction }}" required>
+      </div>
+      <div class="col-md-3">
+        <label for="amount" class="form-label">Kwota</label>
+        <input type="text" class="form-control" id="amount" name="amount"
+               value="{{ edit_transaction.amount if edit_transaction }}" required placeholder="np. 123.45">
+      </div>
+      <div class="col-md-3">
+        <label for="currency" class="form-label">Waluta</label>
+        <select class="form-select" id="currency" name="currency">
+          {% for cur in available_currencies %}
+            <option value="{{ cur }}" {% if edit_transaction and edit_transaction.currency == cur %}selected{% endif %}>{{ cur }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label for="beneficiaries" class="form-label">Beneficjenci (oddzieleni przecinkiem)</label>
         <input type="text" class="form-control" id="beneficiaries" name="beneficiaries"
-               value="{% if edit_transaction %}{{ edit_transaction.beneficiaries|join(', ') if edit_transaction.beneficiaries is iterable and edit_transaction.beneficiaries is not string else edit_transaction.beneficiaries }}{% endif %}" required
-               placeholder="np. Jan, Kasia, Marek">
+               value="{% if edit_transaction %}{{ edit_transaction.beneficiaries | join(', ') }}{% endif %}"
+               required placeholder="np. Jan, Anna, Ola">
       </div>
       <div class="col-12">
         <label for="description" class="form-label">Opis (opcjonalnie)</label>
-        <textarea class="form-control" id="description" name="description" rows="2" placeholder="np. obiad, nocleg, paliwo">{{ edit_transaction.description if edit_transaction }}</textarea>
+        <textarea class="form-control" id="description" name="description" rows="2">{{ edit_transaction.description if edit_transaction }}</textarea>
       </div>
-      <div class="col-12 d-flex gap-2">
+      <div class="col-12">
         {% if edit_transaction %}
           <input type="hidden" name="id" value="{{ edit_transaction.id }}">
-          <button type="submit" name="action" value="update" class="btn btn-warning">
-            <i class="fa fa-save"></i> Zaktualizuj
-          </button>
-          <a href="{{ url_for('index') }}" class="btn btn-secondary">
-            <i class="fa fa-ban"></i> Anuluj
-          </a>
+          <button type="submit" name="action" value="update" class="btn btn-warning"><i class="fa-solid fa-check"></i> Zaktualizuj</button>
+          <a href="{{ url_for('index') }}" class="btn btn-secondary"><i class="fa-solid fa-xmark"></i> Anuluj</a>
         {% else %}
-          <button type="submit" name="action" value="add" class="btn btn-success">
-            <i class="fa fa-plus-circle"></i> Dodaj transakcję
-          </button>
+          <button type="submit" name="action" value="add" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Dodaj transakcję</button>
         {% endif %}
       </div>
     </form>
@@ -92,176 +121,166 @@
 </div>
 
 <!-- Lista transakcji -->
-<div class="card">
+<div class="card shadow">
   <div class="card-header">
-    <i class="fa fa-list"></i> Lista transakcji
+    <i class="fa-solid fa-list"></i> Lista transakcji
   </div>
   <div class="card-body">
     {% if transactions %}
-      <div class="table-responsive">
-        <table class="table table-bordered table-hover">
-          <thead>
-            <tr>
-              <th>#</th><th>Płatnik</th><th>Kwota</th><th>Waluta</th><th>Kwota ({{ main_currency }})</th><th>Beneficjenci</th><th>Opis</th><th>Operacje</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for tx in transactions %}
-            <tr>
-              <td>{{ loop.index }}</td>
-              <td>{{ tx.payer }}</td>
-              <td>{{ "%.2f"|format(tx.amount) }}</td>
-              <td>{{ tx.currency }}</td>
-              <td>{{ "%.2f"|format(tx.amount_converted) }}</td>
-              <td>{{ tx.beneficiaries|join(', ') if tx.beneficiaries is iterable and tx.beneficiaries is not string else tx.beneficiaries }}</td>
-              <td>{{ tx.description }}</td>
-              <td>
-                <form method="post" class="d-inline">
-                  <input type="hidden" name="id" value="{{ tx.id }}">
-                  <button type="submit" name="action" value="edit" class="btn btn-sm btn-info" title="Edytuj">
-                    <i class="fa fa-edit"></i>
-                  </button>
-                </form>
-                <form method="post" class="d-inline">
-                  <input type="hidden" name="id" value="{{ tx.id }}">
-                  <button type="submit" name="action" value="delete" class="btn btn-sm btn-danger" title="Usuń" onclick="return confirm('Na pewno usunąć transakcję?');">
-                    <i class="fa fa-trash-alt"></i>
-                  </button>
-                </form>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      <table class="table table-bordered table-hover">
+        <thead class="table-light">
+          <tr>
+            <th>#</th><th>Płatnik</th><th>Kwota</th><th>Waluta</th><th>Beneficjenci</th><th>Opis</th><th>Operacje</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tx in transactions %}
+          <tr>
+            <td>{{ loop.index0 }}</td>
+            <td>{{ tx.payer }}</td>
+            <td>{{ "%.2f"|format(tx.amount) }}</td>
+            <td>{{ tx.currency }}</td>
+            <td>{{ tx.beneficiaries | join(', ') }}</td>
+            <td>{{ tx.description }}</td>
+            <td>
+              <form method="post" class="d-inline">
+                <input type="hidden" name="id" value="{{ tx.id }}">
+                <button type="submit" name="action" value="edit" class="btn btn-sm btn-info icon-btn" title="Edytuj"><i class="fa-solid fa-pen"></i></button>
+              </form>
+              <form method="post" class="d-inline">
+                <input type="hidden" name="id" value="{{ tx.id }}">
+                <button type="submit" name="action" value="delete" class="btn btn-sm btn-danger icon-btn" title="Usuń"><i class="fa-solid fa-trash"></i></button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     {% else %}
-      <p class="text-center small text-muted">Brak dodanych transakcji.</p>
+      <p class="text-center">Brak transakcji</p>
     {% endif %}
   </div>
 </div>
 
 <!-- Akcje: oblicz, reset, import/export itd. -->
-<div class="card">
-  <div class="card-header"><i class="fa fa-cogs"></i> Działania na transakcjach</div>
+<div class="card shadow">
+  <div class="card-header"><i class="fa-solid fa-calculator"></i> Działania</div>
   <div class="card-body">
-    <form method="post" class="d-inline">
-      <button type="submit" name="action" value="calculate" class="btn btn-success">
-        <i class="fa fa-balance-scale"></i> Oblicz rozliczenie
-      </button>
-    </form>
-    <form method="post" class="d-inline">
-      <button type="submit" name="action" value="reset" class="btn btn-danger">
-        <i class="fa fa-trash"></i> Resetuj transakcje
-      </button>
-    </form>
-    <form method="get" action="{{ url_for('download') }}" class="d-inline">
-      <select name="download_currency" class="form-select d-inline w-auto me-2" style="display:inline-block; width:auto;">
-        {% for cur in currencies %}
-          <option value="{{ cur }}" {% if cur == main_currency %}selected{% endif %}>{{ cur }}</option>
-        {% endfor %}
-      </select>
-      <button type="submit" class="btn btn-secondary">
-        <i class="fa fa-download"></i> Pobierz plik (w wybranej walucie)
-      </button>
-    </form>
-    <form method="post" enctype="multipart/form-data" class="mt-3">
-      <label for="import_file" class="form-label">Wczytaj plik transakcji (JSON)</label>
-      <input type="file" class="form-control" id="import_file" name="import_file" accept=".json" required>
-      <button type="submit" name="action" value="import" class="btn btn-primary mt-2">
-        <i class="fa fa-upload"></i> Załaduj
-      </button>
-    </form>
+    <div class="row g-2 align-items-center">
+      <div class="col-auto">
+        <form method="post" class="d-inline">
+          <button type="submit" name="action" value="calculate" class="btn btn-success"><i class="fa-solid fa-equals"></i> Oblicz rozliczenie</button>
+        </form>
+      </div>
+      <div class="col-auto">
+        <form method="post" class="d-inline">
+          <button type="submit" name="action" value="reset" class="btn btn-danger"><i class="fa-solid fa-trash-can"></i> Resetuj transakcje</button>
+        </form>
+      </div>
+      <div class="col-auto">
+        <form method="post" action="{{ url_for('download') }}" class="d-inline">
+          <div class="input-group">
+            <select name="download_currency" class="form-select" style="max-width: 100px;">
+              {% for cur in available_currencies %}
+                <option value="{{ cur }}" {% if cur == download_currency %}selected{% endif %}>{{ cur }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-file-arrow-down"></i> Pobierz plik</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div class="row g-2 align-items-center mt-3">
+      <div class="col-md-6">
+        <form method="post" enctype="multipart/form-data" class="input-group">
+          <input type="file" class="form-control" id="import_file" name="import_file" accept=".json" required>
+          <button type="submit" name="action" value="import" class="btn btn-primary"><i class="fa-solid fa-file-arrow-up"></i> Wczytaj plik</button>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 
 <!-- Podsumowanie noclegów -->
-<div class="card">
-  <div class="card-header"><i class="fa fa-bed"></i> Podsumowanie noclegów</div>
+<div class="card shadow" style="background: #f8fafb;">
+  <div class="card-header">
+    <i class="fa-solid fa-bed"></i> Podsumowanie noclegów
+  </div>
   <div class="card-body">
     {% if lodging_summary %}
-      <div class="table-responsive">
-        <table class="table table-bordered">
-          <thead><tr><th>Osoba</th><th>Kwota za noclegi ({{ main_currency }})</th></tr></thead>
-          <tbody>
-            {% for person, total in lodging_summary.items() %}
-            <tr><td>{{ person }}</td><td>{{ "%.2f"|format(total) }}</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      <table class="table table-bordered">
+        <thead class="table-light"><tr><th>Osoba</th><th>Kwota za noclegi ({{ main_currency }})</th></tr></thead>
+        <tbody>
+          {% for person, total in lodging_summary.items() %}
+          <tr><td>{{ person }}</td><td>{{ "%.2f"|format(total) }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     {% else %}
-      <p class="text-center small text-muted">Brak transakcji z opisem "nocleg".</p>
+      <p class="text-center">Brak transakcji z opisem "nocleg".</p>
     {% endif %}
   </div>
 </div>
 
 <!-- Szczegółowe rozliczenie -->
-<div class="card">
-  <div class="card-header"><i class="fa fa-list-ol"></i> Szczegóły kosztów</div>
+<div class="card shadow" style="background: #f8fafb;">
+  <div class="card-header">
+    <i class="fa-solid fa-chart-simple"></i> Szczegóły kosztów
+  </div>
   <div class="card-body">
     {% if detailed_settlement %}
-      <div class="table-responsive">
-        <table class="table table-bordered">
-          <thead><tr><th>Osoba</th><th>Wpłacone</th><th>Owes</th><th>Saldo netto</th></tr></thead>
-          <tbody>
-            {% for person, d in detailed_settlement.items() %}
-            <tr>
-              <td>{{ person }}</td>
-              <td>{{ "%.2f"|format(d.paid) }}</td>
-              <td>{{ "%.2f"|format(d.owes) }}</td>
-              <td>
-                <span class="badge {% if d.net > 0 %}bg-success{% elif d.net < 0 %}bg-danger{% else %}bg-secondary{% endif %}">
-                  {{ "%.2f"|format(d.net) }}
-                </span>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      <table class="table table-bordered">
+        <thead class="table-light"><tr><th>Osoba</th><th>Wpłacone ({{ main_currency }})</th><th>Owes</th><th>Saldo netto</th></tr></thead>
+        <tbody>
+          {% for person, d in detailed_settlement.items() %}
+          <tr>
+            <td>{{ person }}</td>
+            <td>{{ "%.2f"|format(d.paid) }}</td>
+            <td>{{ "%.2f"|format(d.owes) }}</td>
+            <td>
+              <span class="{% if d.net < 0 %}text-danger{% elif d.net > 0 %}text-success{% endif %}">
+                {{ "%.2f"|format(d.net) }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     {% else %}
-      <p class="text-center small text-muted">Brak danych.</p>
+      <p class="text-center">Brak danych.</p>
     {% endif %}
   </div>
 </div>
 
 <!-- Macierz rozliczeń -->
 {% if settlement_matrix %}
-<div class="card">
-  <div class="card-header"><i class="fa fa-table"></i> Macierz rozliczeń</div>
+<div class="card shadow" style="background: #f8fafb;">
+  <div class="card-header">
+    <i class="fa-solid fa-table"></i> Macierz rozliczeń
+  </div>
   <div class="card-body">
     {% if negatives and positives %}
-      <div class="table-responsive">
-        <table class="table table-bordered">
-          <thead>
-            <tr>
-              <th>Dłużnik \ Kredytor</th>
-              {% for pos in positives %}<th>{{ pos }}</th>{% endfor %}
-            </tr>
-          </thead>
-          <tbody>
-            {% for neg in negatives %}
-            <tr>
-              <td>{{ neg }}</td>
-              {% for pos in positives %}
-              <td>
-                {% if settlement_matrix[neg][pos] and settlement_matrix[neg][pos] > 0 %}
-                  <span class="text-danger">{{ "%.2f"|format(settlement_matrix[neg][pos]) }}</span>
-                {% else %}
-                  <span class="text-muted">-</span>
-                {% endif %}
-              </td>
-              {% endfor %}
-            </tr>
+      <table class="table table-bordered">
+        <thead class="table-light">
+          <tr><th>Dłużnik \ Kredytor</th>
+            {% for pos in positives %}<th>{{ pos }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for neg in negatives %}
+          <tr>
+            <td>{{ neg }}</td>
+            {% for pos in positives %}
+            <td>{{ "%.2f"|format(settlement_matrix[neg][pos] if settlement_matrix[neg][pos] is defined else 0) }}</td>
             {% endfor %}
-          </tbody>
-        </table>
-      </div>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     {% else %}
-      <p class="text-center small text-muted">Brak danych do macierzy.</p>
+      <p class="text-center">Brak danych do macierzy.</p>
     {% endif %}
   </div>
 </div>
 {% endif %}
-
 {% endblock %}
