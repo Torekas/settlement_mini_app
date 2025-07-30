@@ -230,7 +230,7 @@
   <div class="card-body">
     {% if detailed_settlement %}
       <table class="table table-bordered">
-        <thead class="table-light"><tr><th>Osoba</th><th>Wpłacone ({{ main_currency }})</th><th>Udział w wydatkach</th><th>Saldo netto</th></tr></thead>
+        <thead class="table-light"><tr><th>Osoba</th><th>Wpłacone ({{ main_currency }})</th><th>Udział</th><th>Saldo netto</th></tr></thead>
         <tbody>
           {% for person, d in detailed_settlement.items() %}
           <tr>
