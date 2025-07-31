@@ -178,15 +178,20 @@
         </form>
       </div>
       <div class="col-auto">
-        <form method="post" action="{{ url_for('download') }}" class="d-inline">
+        <!-- JSON download -->
+        <form method="post" action="{{ url_for('download_json') }}" class="d-inline">
           <div class="input-group">
             <select name="download_currency" class="form-select" style="max-width: 100px;">
               {% for cur in available_currencies %}
                 <option value="{{ cur }}" {% if cur == download_currency %}selected{% endif %}>{{ cur }}</option>
               {% endfor %}
             </select>
-            <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-file-arrow-down"></i> Pobierz plik</button>
+            <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-file-arrow-down"></i> Pobierz JSON</button>
           </div>
+        </form>
+        <!-- HTML report download -->
+        <form method="get" action="{{ url_for('download_report') }}" class="d-inline ms-2">
+          <button type="submit" class="btn btn-outline-primary"><i class="fa-solid fa-file-code"></i> Pobierz HTML</button>
         </form>
       </div>
     </div>
@@ -237,11 +242,7 @@
             <td>{{ person }}</td>
             <td>{{ "%.2f"|format(d.paid) }}</td>
             <td>{{ "%.2f"|format(d.owes) }}</td>
-            <td>
-              <span class="{% if d.net < 0 %}text-danger{% elif d.net > 0 %}text-success{% endif %}">
-                {{ "%.2f"|format(d.net) }}
-              </span>
-            </td>
+            <td><span class="{% if d.net < 0 %}text-danger{% elif d.net > 0 %}text-success{% endif %}">{{ "%.2f"|format(d.net) }}</span></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -262,9 +263,7 @@
     {% if negatives and positives %}
       <table class="table table-bordered">
         <thead class="table-light">
-          <tr><th>Dłużnik \ Kredytor</th>
-            {% for pos in positives %}<th>{{ pos }}</th>{% endfor %}
-          </tr>
+          <tr><th>Dłużnik \ Kredytor</th>{% for pos in positives %}<th>{{ pos }}</th>{% endfor %}</tr>
         </thead>
         <tbody>
           {% for neg in negatives %}
@@ -283,4 +282,5 @@
   </div>
 </div>
 {% endif %}
+
 {% endblock %}

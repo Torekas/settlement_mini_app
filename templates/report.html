@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Raport Rozliczeń</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --primary-color: #4CAF50; --secondary-color: #f9f9f9; --accent-color: #333; --card-bg: #fff; --border-radius: 8px; --shadow: rgba(0, 0, 0, 0.1); }
+    * { box-sizing: border-box; }
+    body { font-family: 'Roboto', sans-serif; margin: 0; background: var(--secondary-color); color: var(--accent-color); line-height: 1.6; }
+    .container { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { text-align: center; color: var(--primary-color); margin-bottom: 1.5rem; }
+    .card { background: var(--card-bg); border-radius: var(--border-radius); box-shadow: 0 2px 8px var(--shadow); padding: 1.5rem; margin-bottom: 2rem; }
+    .card h2 { margin-top: 0; color: var(--primary-color); font-weight: 500; border-bottom: 2px solid var(--primary-color); padding-bottom: 0.5rem; }
+    ul.summary-list { list-style: none; padding: 0; }
+    ul.summary-list li { padding: 0.5rem 0; border-bottom: 1px solid #eee; }
+    ul.summary-list li:last-child { border-bottom: none; }
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+    .charts img { width: 100%; height: auto; border-radius: var(--border-radius); }
+    .charts img { width: 100%; height: auto; border-radius: var(--border-radius); }
+    table { width: 100%; border-collapse: collapse; }
+    table th, table td { padding: 0.75rem; text-align: center; }
+    table thead { background: var(--primary-color); color: #fff; }
+    table tbody tr:nth-child(even) { background: var(--secondary-color); }
+    table tbody tr:hover { background: #e8f5e9; }
+    @media (max-width: 600px) { .charts { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Raport Rozliczeń</h1>
+
+    <div class="card">
+      <h2>Podsumowanie szczegółowe</h2>
+      <ul class="summary-list">
+        {% for person, data in detailed.items() %}
+          <li><strong>{{ person }}</strong>: {{ data.verb }} <strong>{{ data.paid }} {{ main_currency }}</strong>, saldo: <strong>{{ data.net }} {{ main_currency }}</strong></li>
+        {% endfor %}
+      </ul>
+      <div class="charts">
+        <img src="data:image/png;base64,{{ detailed_chart }}" alt="Saldo netto uczestników">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Podsumowanie noclegów</h2>
+      {% if lodging %}
+        <ul class="summary-list">
+          {% for person, amount in lodging.items() %}
+            <li><strong>{{ person }}</strong>: {{ amount }} {{ main_currency }}</li>
+          {% endfor %}
+        </ul>
+        <div class="charts">
+          <img src="data:image/png;base64,{{ lodging_chart }}" alt="Udział kosztów noclegów">
+        </div>
+      {% else %}
+        <p>Brak transakcji oznaczonych jako nocleg.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Macierz rozliczeń</h2>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr><th>Dłużnik \ Wierzyciel</th>{% for cred in positives %}<th>{{ cred }}</th>{% endfor %}</tr>
+          </thead>
+          <tbody>
+            {% for deb, row in matrix.items() %}
+              <tr><td><strong>{{ deb }}</strong></td>{% for cred in positives %}<td>{{ row.get(cred, 0) }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
