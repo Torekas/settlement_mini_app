@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 import base64
 from datetime import datetime
 
-import matplotlib.pyplot as plt
+# ZAKOMENTUJEMY matplotlib oraz numpy
+# import matplotlib.pyplot as plt
 
 load_dotenv()
 app = Flask(__name__)
@@ -508,65 +509,13 @@ def download_json():
         download_name=f'transactions_{to_cur}.json'
     )
 
+# ======== USUNIĘTE/WYŁĄCZONE GENEROWANIE RAPORTU Z MATPLOTLIB =============
 @app.route('/download-report', methods=['GET'])
 @login_required
 def download_report():
-    user = get_user()
-    main_currency = user.get('main_currency', 'PLN')
-    currency_rates = user.get('currency_rates', {"PLN": 1.0})
-    transactions = fetch_transactions(session['user_id'])
-    matrix = compute_settlement_matrix(transactions, main_currency, currency_rates)
-    detailed = get_detailed_settlement(transactions, main_currency, currency_rates)
-    lodging = get_lodging_summary(transactions, main_currency, currency_rates)
-    positives = sorted(p for p, d in detailed.items() if d['net'] > 0)
-    negatives = sorted(p for p, d in detailed.items() if d['net'] < 0)
-
-    for p, data in detailed.items():
-        data['verb'] = get_gender_verb(p, data['paid'])
-
-    fig, ax = plt.subplots()
-    names = list(detailed.keys())
-    nets = [detailed[p]['net'] for p in names]
-    bars = ax.bar(names, nets)
-    ax.set_title('Saldo netto uczestników')
-    ax.set_ylabel(main_currency)
-    for bar, net in zip(bars, nets):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f'{net:.2f}', ha='center', va='bottom')
-    plt.tight_layout()
-    buf1 = io.BytesIO()
-    fig.savefig(buf1, format='png')
-    plt.close(fig)
-    buf1.seek(0)
-    detailed_chart = base64.b64encode(buf1.read()).decode('utf-8')
-
-    if lodging:
-        fig2, ax2 = plt.subplots()
-        names2 = list(lodging.keys())
-        vals2 = list(lodging.values())
-        ax2.pie(vals2, labels=names2, autopct='%1.1f%%')
-        ax2.set_title('Udział kosztów noclegów')
-        plt.tight_layout()
-        buf2 = io.BytesIO()
-        fig2.savefig(buf2, format='png')
-        plt.close(fig2)
-        buf2.seek(0)
-        lodging_chart = base64.b64encode(buf2.read()).decode('utf-8')
-    else:
-        lodging_chart = None
-
-    rendered = render_template(
-        'report.html', matrix=matrix, detailed=detailed,
-        lodging=lodging, positives=positives,
-        negatives=negatives, main_currency=main_currency,
-        detailed_chart=detailed_chart, lodging_chart=lodging_chart
-    )
-    buf = io.BytesIO(rendered.encode('utf-8'))
-    buf.seek(0)
-    flash('Pobrano raport HTML z podsumowaniami.', 'info')
-    return send_file(
-        buf, mimetype='text/html', as_attachment=True,
-        download_name=f'report_{main_currency}.html'
-    )
+    # Cały endpoint wyłączony!
+    pass
+# ==========================================================================
 
 if __name__ == '__main__':
     app.run(debug=True)
