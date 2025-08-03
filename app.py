@@ -11,9 +11,7 @@ from dotenv import load_dotenv
 import base64
 from datetime import datetime
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 load_dotenv()
 app = Flask(__name__)
