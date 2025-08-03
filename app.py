@@ -15,7 +15,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-
 load_dotenv()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'C46ABA8FA628964A54B9D2B7A2E7Fo')
@@ -23,12 +22,22 @@ MONGODB_URI = os.getenv(
     'MONGODB_URI',
     "mongodb+srv://janmichalak78:W9DJ4jAcjjVXFYPp@cluster0.gk8zvxq.mongodb.net/settlement_db?retryWrites=true&w=majority"
 )
-client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-db = client['settlement_db']
-transactions_col = db['transactions']
-users_col = db['users']
 
 SUPPORTED_CURRENCIES = ["PLN", "EUR", "USD", "NOK", "GBP", "CZK", "CHF", "SEK", "DKK"]
+
+def get_db():
+    client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+    db = client['settlement_db']
+    return db
+
+def get_transactions_col():
+    return get_db()['transactions']
+
+def get_users_col():
+    return get_db()['users']
+
+def get_trips_col():
+    return get_db()['trips']
 
 def login_required(f):
     @wraps(f)
@@ -45,11 +54,11 @@ def register():
         password = request.form.get('password', '')
         if not username or not password:
             flash('Nazwa użytkownika i hasło są wymagane.', 'danger')
-        elif users_col.find_one({'username': username}):
+        elif get_users_col().find_one({'username': username}):
             flash('Użytkownik już istnieje.', 'danger')
         else:
             pw_hash = generate_password_hash(password)
-            users_col.insert_one({
+            get_users_col().insert_one({
                 'username': username,
                 'password': pw_hash,
                 'main_currency': "PLN",
@@ -64,13 +73,14 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        user = users_col.find_one({'username': username})
+        user = get_users_col().find_one({'username': username})
         if not user or not check_password_hash(user['password'], password):
             flash('Nieprawidłowe dane logowania.', 'danger')
         else:
             session['user_id'] = str(user['_id'])
             session['username'] = username
             flash(f'Witaj, {username}!', 'success')
+            # Zmień na index lub archive_list, jak chcesz!
             return redirect(url_for('index'))
     return render_template('login.html')
 
@@ -81,10 +91,10 @@ def logout():
     return redirect(url_for('login'))
 
 def get_user():
-    return users_col.find_one({'_id': ObjectId(session['user_id'])})
+    return get_users_col().find_one({'_id': ObjectId(session['user_id'])})
 
 def fetch_transactions(user_id):
-    docs = list(transactions_col.find({'user_id': user_id}))
+    docs = list(get_transactions_col().find({'user_id': user_id}))
     txs = []
     for d in docs:
         txs.append({
@@ -183,9 +193,6 @@ def get_lodging_summary(transactions, main_currency, rates):
                     summary[b] = summary.get(b, 0) + share
     return {k: round(v, 2) for k, v in summary.items()}
 
-
-trips_col = db['trips']
-
 @app.route('/archive-trip', methods=['POST'])
 @login_required
 def archive_trip():
@@ -214,21 +221,22 @@ def archive_trip():
         "main_currency": user.get('main_currency', 'PLN'),
         "currency_rates": user.get('currency_rates', {"PLN": 1.0}),
     }
-    trips_col.insert_one(archive_doc)
-    transactions_col.delete_many({'user_id': session['user_id']})
+    get_trips_col().insert_one(archive_doc)
+    get_transactions_col().delete_many({'user_id': session['user_id']})
     flash(f'Wycieczka „{trip_name}” została przeniesiona do archiwum.', 'success')
     return redirect(url_for('archive_list'))
+
 @app.route('/archive')
 @login_required
 def archive_list():
     user_id = session['user_id']
-    trips = list(trips_col.find({'user_id': user_id}))
+    trips = list(get_trips_col().find({'user_id': user_id}))
     return render_template('archive.html', trips=trips)
 
 @app.route('/archive/<trip_id>')
 @login_required
 def archive_view(trip_id):
-    trip = trips_col.find_one({'_id': ObjectId(trip_id)})
+    trip = get_trips_col().find_one({'_id': ObjectId(trip_id)})
     if not trip or trip['user_id'] != session['user_id']:
         flash('Nie znaleziono wycieczki.', 'danger')
         return redirect(url_for('archive_list'))
@@ -251,6 +259,35 @@ def archive_view(trip_id):
         main_currency=main_currency,
         currency_rates=currency_rates,
     )
+
+@app.route('/archive/<trip_id>/delete', methods=['POST'])
+@login_required
+def archive_delete(trip_id):
+    trip = get_trips_col().find_one({'_id': ObjectId(trip_id)})
+    if not trip or trip['user_id'] != session['user_id']:
+        flash('Brak dostępu.', 'danger')
+        return redirect(url_for('archive_list'))
+    get_trips_col().delete_one({'_id': ObjectId(trip_id)})
+    flash('Wycieczka została usunięta z archiwum.', 'success')
+    return redirect(url_for('archive_list'))
+
+@app.route('/archive/<trip_id>/edit', methods=['GET', 'POST'])
+@login_required
+def archive_edit(trip_id):
+    trip = get_trips_col().find_one({'_id': ObjectId(trip_id)})
+    if not trip or trip['user_id'] != session['user_id']:
+        flash('Brak dostępu.', 'danger')
+        return redirect(url_for('archive_list'))
+    if request.method == 'POST':
+        new_name = request.form.get('trip_name', '').strip()
+        new_desc = request.form.get('trip_desc', '').strip()
+        if not new_name:
+            flash('Nazwa wycieczki jest wymagana!', 'danger')
+            return redirect(url_for('archive_edit', trip_id=trip_id))
+        get_trips_col().update_one({'_id': ObjectId(trip_id)}, {'$set': {'name': new_name, 'description': new_desc}})
+        flash('Zaktualizowano dane wycieczki.', 'success')
+        return redirect(url_for('archive_view', trip_id=trip_id))
+    return render_template('archive_edit.html', trip=trip)
 
 @app.route('/', methods=['GET', 'POST'])
 @login_required
@@ -281,7 +318,7 @@ def index():
                 try:
                     amount = float(amount_str.replace(',', '.'))
                     bens = [b.strip() for b in bens_str.split(',') if b.strip()]
-                    transactions_col.insert_one({
+                    get_transactions_col().insert_one({
                         'user_id': session['user_id'],
                         'payer': payer,
                         'amount': amount,
@@ -296,7 +333,7 @@ def index():
         elif action == 'edit':
             edit_id = request.form.get('id')
             if edit_id:
-                doc = transactions_col.find_one({'_id': ObjectId(edit_id)})
+                doc = get_transactions_col().find_one({'_id': ObjectId(edit_id)})
                 if doc:
                     edit_tx = {
                         'id': edit_id,
@@ -321,7 +358,7 @@ def index():
                 try:
                     amount = float(amount_str.replace(',', '.'))
                     bens = [b.strip() for b in bens_str.split(',') if b.strip()]
-                    transactions_col.update_one(
+                    get_transactions_col().update_one(
                         {'_id': ObjectId(edit_id)},
                         {'$set': {
                             'payer': payer,
@@ -338,7 +375,7 @@ def index():
         elif action == 'delete':
             del_id = request.form.get('id')
             if del_id:
-                transactions_col.delete_one({'_id': ObjectId(del_id)})
+                get_transactions_col().delete_one({'_id': ObjectId(del_id)})
                 flash('Usunięto transakcję.', 'info')
                 return redirect(url_for('index'))
             else:
@@ -346,7 +383,7 @@ def index():
         elif action == 'set_main_currency':
             new_main = request.form.get('main_currency')
             if new_main and new_main in currency_rates:
-                users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'main_currency': new_main}})
+                get_users_col().update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'main_currency': new_main}})
                 flash(f'Zmieniono walutę główną na {new_main}.', 'success')
                 main_currency = new_main
             else:
@@ -358,7 +395,7 @@ def index():
                 val = float(val.replace(',', '.'))
                 if cur and val > 0:
                     currency_rates[cur] = val
-                    users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'currency_rates': currency_rates}})
+                    get_users_col().update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'currency_rates': currency_rates}})
                     flash(f'Ustawiono kurs {cur}: {val}', 'success')
                 else:
                     flash("Nieprawidłowy kod waluty lub wartość.", 'danger')
@@ -368,14 +405,14 @@ def index():
             cur = request.form.get('del_currency_code', '').upper()
             if cur in currency_rates and cur != main_currency:
                 currency_rates.pop(cur)
-                users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'currency_rates': currency_rates}})
+                get_users_col().update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'currency_rates': currency_rates}})
                 flash(f'Usunięto kurs waluty {cur}.', 'info')
             else:
                 flash("Nie można usunąć tej waluty lub jest ona walutą główną.", 'danger')
         elif action == 'calculate':
             flash('Obliczono rozliczenie.', 'info')
         elif action == 'reset':
-            transactions_col.delete_many({'user_id': session['user_id']})
+            get_transactions_col().delete_many({'user_id': session['user_id']})
             flash('Wyczyszczono wszystkie transakcje.', 'warning')
             return redirect(url_for('index'))
         elif action == 'import':
@@ -384,12 +421,12 @@ def index():
                 try:
                     imported = json.loads(f.read().decode('utf-8'))
                     if isinstance(imported, list):
-                        transactions_col.delete_many({'user_id': session['user_id']})
+                        get_transactions_col().delete_many({'user_id': session['user_id']})
                         for tx in imported:
                             tx['user_id'] = session['user_id']
                             if 'currency' not in tx:
                                 tx['currency'] = main_currency
-                            transactions_col.insert_one(tx)
+                            get_transactions_col().insert_one(tx)
                         flash('Zaimportowano transakcje.', 'success')
                         return redirect(url_for('index'))
                     else:
@@ -443,11 +480,10 @@ def index():
 @app.route('/download', methods=['GET', 'POST'])
 @login_required
 def download_json():
-    """Original JSON download endpoint"""
     user = get_user()
     main_currency = user.get('main_currency', 'PLN')
     currency_rates = user.get('currency_rates', {"PLN": 1.0})
-    docs = list(transactions_col.find({'user_id': session['user_id']}))
+    docs = list(get_transactions_col().find({'user_id': session['user_id']}))
     out = []
     to_cur = request.args.get('currency') or main_currency
     for d in docs:
@@ -477,7 +513,6 @@ def download_json():
 @app.route('/download-report', methods=['GET'])
 @login_required
 def download_report():
-    """HTML report endpoint"""
     user = get_user()
     main_currency = user.get('main_currency', 'PLN')
     currency_rates = user.get('currency_rates', {"PLN": 1.0})
@@ -491,7 +526,6 @@ def download_report():
     for p, data in detailed.items():
         data['verb'] = get_gender_verb(p, data['paid'])
 
-    # Bar chart
     fig, ax = plt.subplots()
     names = list(detailed.keys())
     nets = [detailed[p]['net'] for p in names]
@@ -507,7 +541,6 @@ def download_report():
     buf1.seek(0)
     detailed_chart = base64.b64encode(buf1.read()).decode('utf-8')
 
-    # Pie chart
     if lodging:
         fig2, ax2 = plt.subplots()
         names2 = list(lodging.keys())
@@ -536,36 +569,6 @@ def download_report():
         buf, mimetype='text/html', as_attachment=True,
         download_name=f'report_{main_currency}.html'
     )
-
-@app.route('/archive/<trip_id>/delete', methods=['POST'])
-@login_required
-def archive_delete(trip_id):
-    trip = trips_col.find_one({'_id': ObjectId(trip_id)})
-    if not trip or trip['user_id'] != session['user_id']:
-        flash('Brak dostępu.', 'danger')
-        return redirect(url_for('archive_list'))
-    trips_col.delete_one({'_id': ObjectId(trip_id)})
-    flash('Wycieczka została usunięta z archiwum.', 'success')
-    return redirect(url_for('archive_list'))
-
-@app.route('/archive/<trip_id>/edit', methods=['GET', 'POST'])
-@login_required
-def archive_edit(trip_id):
-    trip = trips_col.find_one({'_id': ObjectId(trip_id)})
-    if not trip or trip['user_id'] != session['user_id']:
-        flash('Brak dostępu.', 'danger')
-        return redirect(url_for('archive_list'))
-    if request.method == 'POST':
-        new_name = request.form.get('trip_name', '').strip()
-        new_desc = request.form.get('trip_desc', '').strip()
-        if not new_name:
-            flash('Nazwa wycieczki jest wymagana!', 'danger')
-            return redirect(url_for('archive_edit', trip_id=trip_id))
-        trips_col.update_one({'_id': ObjectId(trip_id)}, {'$set': {'name': new_name, 'description': new_desc}})
-        flash('Zaktualizowano dane wycieczki.', 'success')
-        return redirect(url_for('archive_view', trip_id=trip_id))
-    return render_template('archive_edit.html', trip=trip)
-
 
 if __name__ == '__main__':
     app.run(debug=True)
