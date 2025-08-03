@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Archiwum wycieczek{% endblock %}
+{% block content %}
+
+<h3 class="mb-4"><i class="fa-solid fa-box-archive"></i> Archiwum wycieczek</h3>
+
+<table class="table table-bordered">
+  <thead>
+    <tr>
+      <th>Nazwa</th>
+      <th>Opis</th>
+      <th>Data archiwizacji</th>
+      <th>Akcje</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for trip in trips %}
+    <tr>
+      <td>{{ trip.name }}</td>
+      <td>{{ trip.description }}</td>
+      <td>
+        {% if trip.archived_at %}
+          {{ trip.archived_at.strftime('%Y-%m-%d %H:%M') }}
+        {% endif %}
+      </td>
+      <td>
+        <a href="{{ url_for('archive_view', trip_id=trip._id) }}" class="btn btn-sm btn-primary mb-1">
+          <i class="fa-solid fa-eye"></i> Podgląd
+        </a>
+        <a href="{{ url_for('archive_edit', trip_id=trip._id) }}" class="btn btn-sm btn-warning mb-1">
+          <i class="fa-solid fa-pen"></i> Edytuj
+        </a>
+        <form method="post" action="{{ url_for('archive_delete', trip_id=trip._id) }}" style="display:inline;" onsubmit="return confirm('Na pewno usunąć tę wycieczkę?');">
+          <button type="submit" class="btn btn-sm btn-danger mb-1">
+            <i class="fa-solid fa-trash"></i> Usuń
+          </button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<a href="{{ url_for('index') }}" class="btn btn-link"><i class="fa-solid fa-arrow-left"></i> Wróć do rozliczeń</a>
+{% endblock %}

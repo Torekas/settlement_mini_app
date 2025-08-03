@@ -10,6 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import base64
+from datetime import datetime
 
 load_dotenv()
 app = Flask(__name__)
@@ -177,6 +178,75 @@ def get_lodging_summary(transactions, main_currency, rates):
                 for b in bens:
                     summary[b] = summary.get(b, 0) + share
     return {k: round(v, 2) for k, v in summary.items()}
+
+
+trips_col = db['trips']
+
+@app.route('/archive-trip', methods=['POST'])
+@login_required
+def archive_trip():
+    user = get_user()
+    if not user:
+        flash('Błąd użytkownika.', 'danger')
+        return redirect(url_for('index'))
+
+    trip_name = request.form.get('trip_name', '').strip()
+    trip_desc = request.form.get('trip_desc', '').strip()
+    if not trip_name:
+        flash('Nazwa wycieczki jest wymagana!', 'danger')
+        return redirect(url_for('index'))
+
+    transactions = fetch_transactions(session['user_id'])
+    if not transactions:
+        flash('Brak transakcji do archiwizacji.', 'danger')
+        return redirect(url_for('index'))
+
+    archive_doc = {
+        "user_id": session['user_id'],
+        "name": trip_name,
+        "description": trip_desc,
+        "archived_at": datetime.utcnow(),
+        "transactions": transactions,
+        "main_currency": user.get('main_currency', 'PLN'),
+        "currency_rates": user.get('currency_rates', {"PLN": 1.0}),
+    }
+    trips_col.insert_one(archive_doc)
+    transactions_col.delete_many({'user_id': session['user_id']})
+    flash(f'Wycieczka „{trip_name}” została przeniesiona do archiwum.', 'success')
+    return redirect(url_for('archive_list'))
+@app.route('/archive')
+@login_required
+def archive_list():
+    user_id = session['user_id']
+    trips = list(trips_col.find({'user_id': user_id}))
+    return render_template('archive.html', trips=trips)
+
+@app.route('/archive/<trip_id>')
+@login_required
+def archive_view(trip_id):
+    trip = trips_col.find_one({'_id': ObjectId(trip_id)})
+    if not trip or trip['user_id'] != session['user_id']:
+        flash('Nie znaleziono wycieczki.', 'danger')
+        return redirect(url_for('archive_list'))
+    transactions = trip['transactions']
+    main_currency = trip.get('main_currency', 'PLN')
+    currency_rates = trip.get('currency_rates', {"PLN": 1.0})
+    settlement_matrix = compute_settlement_matrix(transactions, main_currency, currency_rates)
+    detailed = get_detailed_settlement(transactions, main_currency, currency_rates)
+    lodging = get_lodging_summary(transactions, main_currency, currency_rates)
+    positives = sorted(p for p, d in detailed.items() if d['net'] > 0)
+    negatives = sorted(p for p, d in detailed.items() if d['net'] < 0)
+    return render_template('archive_view.html',
+        trip=trip,
+        transactions=transactions,
+        settlement_matrix=settlement_matrix,
+        detailed_settlement=detailed,
+        lodging_summary=lodging,
+        positives=positives,
+        negatives=negatives,
+        main_currency=main_currency,
+        currency_rates=currency_rates,
+    )
 
 @app.route('/', methods=['GET', 'POST'])
 @login_required
@@ -462,6 +532,36 @@ def download_report():
         buf, mimetype='text/html', as_attachment=True,
         download_name=f'report_{main_currency}.html'
     )
+
+@app.route('/archive/<trip_id>/delete', methods=['POST'])
+@login_required
+def archive_delete(trip_id):
+    trip = trips_col.find_one({'_id': ObjectId(trip_id)})
+    if not trip or trip['user_id'] != session['user_id']:
+        flash('Brak dostępu.', 'danger')
+        return redirect(url_for('archive_list'))
+    trips_col.delete_one({'_id': ObjectId(trip_id)})
+    flash('Wycieczka została usunięta z archiwum.', 'success')
+    return redirect(url_for('archive_list'))
+
+@app.route('/archive/<trip_id>/edit', methods=['GET', 'POST'])
+@login_required
+def archive_edit(trip_id):
+    trip = trips_col.find_one({'_id': ObjectId(trip_id)})
+    if not trip or trip['user_id'] != session['user_id']:
+        flash('Brak dostępu.', 'danger')
+        return redirect(url_for('archive_list'))
+    if request.method == 'POST':
+        new_name = request.form.get('trip_name', '').strip()
+        new_desc = request.form.get('trip_desc', '').strip()
+        if not new_name:
+            flash('Nazwa wycieczki jest wymagana!', 'danger')
+            return redirect(url_for('archive_edit', trip_id=trip_id))
+        trips_col.update_one({'_id': ObjectId(trip_id)}, {'$set': {'name': new_name, 'description': new_desc}})
+        flash('Zaktualizowano dane wycieczki.', 'success')
+        return redirect(url_for('archive_view', trip_id=trip_id))
+    return render_template('archive_edit.html', trip=trip)
+
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Podgląd wycieczki – {{ trip.name }}{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <h3><i class="fa-solid fa-box-archive"></i> {{ trip.name }}</h3>
+  {% if trip.description %}
+    <p class="mb-1"><b>Opis:</b> {{ trip.description }}</p>
+  {% endif %}
+  <p class="text-muted"><i class="fa-solid fa-calendar"></i> Zarchiwizowano: {{ trip.archived_at.strftime('%Y-%m-%d %H:%M') if trip.archived_at }}</p>
+  <div class="mb-3">
+    <a href="{{ url_for('archive_list') }}" class="btn btn-link mb-2">
+      <i class="fa-solid fa-arrow-left"></i> Powrót do archiwum
+    </a>
+    <a href="{{ url_for('archive_edit', trip_id=trip._id) }}" class="btn btn-warning ms-2 mb-2">
+      <i class="fa-solid fa-pen"></i> Edytuj
+    </a>
+    <form method="post" action="{{ url_for('archive_delete', trip_id=trip._id) }}" style="display:inline;" onsubmit="return confirm('Na pewno usunąć tę wycieczkę?');">
+      <button type="submit" class="btn btn-danger ms-2 mb-2">
+        <i class="fa-solid fa-trash"></i> Usuń
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Lista transakcji -->
+<div class="card shadow mb-4">
+  <div class="card-header">
+    <i class="fa-solid fa-list"></i> Lista transakcji
+  </div>
+  <div class="card-body">
+    {% if transactions %}
+      <table class="table table-bordered table-hover">
+        <thead class="table-light">
+          <tr>
+            <th>#</th><th>Płatnik</th><th>Kwota</th><th>Waluta</th><th>Beneficjenci</th><th>Opis</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tx in transactions %}
+          <tr>
+            <td>{{ loop.index0 }}</td>
+            <td>{{ tx.payer }}</td>
+            <td>{{ "%.2f"|format(tx.amount) }}</td>
+            <td>{{ tx.currency }}</td>
+            <td>{{ tx.beneficiaries | join(', ') }}</td>
+            <td>{{ tx.description }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="text-center">Brak transakcji</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Podsumowanie noclegów -->
+<div class="card shadow mb-4" style="background: #f8fafb;">
+  <div class="card-header">
+    <i class="fa-solid fa-bed"></i> Podsumowanie noclegów
+  </div>
+  <div class="card-body">
+    {% if lodging_summary %}
+      <table class="table table-bordered">
+        <thead class="table-light"><tr><th>Osoba</th><th>Kwota za noclegi ({{ main_currency }})</th></tr></thead>
+        <tbody>
+          {% for person, total in lodging_summary.items() %}
+          <tr><td>{{ person }}</td><td>{{ "%.2f"|format(total) }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="text-center">Brak transakcji z opisem "nocleg".</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Szczegółowe rozliczenie -->
+<div class="card shadow mb-4" style="background: #f8fafb;">
+  <div class="card-header">
+    <i class="fa-solid fa-chart-simple"></i> Szczegóły kosztów
+  </div>
+  <div class="card-body">
+    {% if detailed_settlement %}
+      <table class="table table-bordered">
+        <thead class="table-light"><tr><th>Osoba</th><th>Wpłacone ({{ main_currency }})</th><th>Udział</th><th>Saldo netto</th></tr></thead>
+        <tbody>
+          {% for person, d in detailed_settlement.items() %}
+          <tr>
+            <td>{{ person }}</td>
+            <td>{{ "%.2f"|format(d.paid) }}</td>
+            <td>{{ "%.2f"|format(d.owes) }}</td>
+            <td><span class="{% if d.net < 0 %}text-danger{% elif d.net > 0 %}text-success{% endif %}">{{ "%.2f"|format(d.net) }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="text-center">Brak danych.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Macierz rozliczeń -->
+{% if settlement_matrix %}
+<div class="card shadow mb-4" style="background: #f8fafb;">
+  <div class="card-header">
+    <i class="fa-solid fa-table"></i> Macierz rozliczeń
+  </div>
+  <div class="card-body">
+    {% if negatives and positives %}
+      <table class="table table-bordered">
+        <thead class="table-light">
+          <tr><th>Dłużnik \ Kredytor</th>{% for pos in positives %}<th>{{ pos }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+          {% for neg in negatives %}
+          <tr>
+            <td>{{ neg }}</td>
+            {% for pos in positives %}
+            <td>{{ "%.2f"|format(settlement_matrix[neg][pos] if settlement_matrix[neg][pos] is defined else 0) }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="text-center">Brak danych do macierzy.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}
