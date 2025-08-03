@@ -8,9 +8,13 @@ from bson.objectid import ObjectId
 from collections import defaultdict
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
-import matplotlib.pyplot as plt
 import base64
 from datetime import datetime
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 
 load_dotenv()
 app = Flask(__name__)
