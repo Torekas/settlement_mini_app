@@ -2,7 +2,10 @@ import os
 import json
 import io
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, send_file, session, flash
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    send_file, session, flash, g
+)
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 from collections import defaultdict
@@ -11,20 +14,52 @@ from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 import base64
 
-load_dotenv()
+# Load environment variables
+dotenv_path = os.getenv('DOTENV_PATH')
+if dotenv_path:
+    load_dotenv(dotenv_path)
+else:
+    load_dotenv()
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'C46ABA8FA628964A54B9D2B7A2E7Fo')
+app.config['SECRET_KEY'] = os.getenv(
+    'SECRET_KEY', 'C46ABA8FA628964A54B9D2B7A2E7Fo'
+)
+
+# MongoDB configuration
 MONGODB_URI = os.getenv(
     'MONGODB_URI',
     "mongodb+srv://janmichalak78:W9DJ4jAcjjVXFYPp@cluster0.gk8zvxq.mongodb.net/settlement_db?retryWrites=true&w=majority"
 )
-client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-db = client['settlement_db']
-transactions_col = db['transactions']
-users_col = db['users']
+DB_NAME = os.getenv('DB_NAME', 'settlement_db')
 
-SUPPORTED_CURRENCIES = ["PLN", "EUR", "USD", "NOK", "GBP", "CZK", "CHF", "SEK", "DKK"]
+SUPPORTED_CURRENCIES = [
+    "PLN", "EUR", "USD", "NOK",
+    "GBP", "CZK", "CHF", "SEK", "DKK"
+]
 
+# --- Database helpers ---
+def get_db_client():
+    """
+    Lazily initialize MongoClient after forking to avoid fork-safety issues.
+    """
+    if not hasattr(g, 'db_client'):
+        g.db_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+    return g.db_client
+
+
+def get_db():
+    return get_db_client()[DB_NAME]
+
+
+def get_users_collection():
+    return get_db()['users']
+
+
+def get_transactions_collection():
+    return get_db()['transactions']
+
+# --- Authentication ---
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -33,11 +68,13 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
+        users_col = get_users_collection()
         if not username or not password:
             flash('Nazwa użytkownika i hasło są wymagane.', 'danger')
         elif users_col.find_one({'username': username}):
@@ -47,19 +84,20 @@ def register():
             users_col.insert_one({
                 'username': username,
                 'password': pw_hash,
-                'main_currency': "PLN",
-                'currency_rates': {"PLN": 1.0, "EUR": 4.0, "USD": 3.8}
+                'main_currency': 'PLN',
+                'currency_rates': {'PLN': 1.0, 'EUR': 4.0, 'USD': 3.8}
             })
             flash('Rejestracja zakończona sukcesem! Zaloguj się.', 'success')
             return redirect(url_for('login'))
     return render_template('register.html')
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        user = users_col.find_one({'username': username})
+        user = get_users_collection().find_one({'username': username})
         if not user or not check_password_hash(user['password'], password):
             flash('Nieprawidłowe dane logowania.', 'danger')
         else:
@@ -69,17 +107,20 @@ def login():
             return redirect(url_for('index'))
     return render_template('login.html')
 
+
 @app.route('/logout')
 def logout():
     session.clear()
     flash('Wylogowano.', 'info')
     return redirect(url_for('login'))
 
+# --- Core logic ---
 def get_user():
-    return users_col.find_one({'_id': ObjectId(session['user_id'])})
+    return get_users_collection().find_one({'_id': ObjectId(session['user_id'])})
+
 
 def fetch_transactions(user_id):
-    docs = list(transactions_col.find({'user_id': user_id}))
+    docs = list(get_transactions_collection().find({'user_id': user_id}))
     txs = []
     for d in docs:
         txs.append({
@@ -92,11 +133,12 @@ def fetch_transactions(user_id):
         })
     return txs
 
+
 def get_gender_verb(name, amount):
     if name.strip().lower().endswith('a') and not name.strip().lower().endswith('ba'):
         return 'zapłaciła'
-    else:
-        return 'zapłacił'
+    return 'zapłacił'
+
 
 def convert(amount, from_cur, to_cur, rates):
     if from_cur == to_cur:
@@ -105,21 +147,20 @@ def convert(amount, from_cur, to_cur, rates):
         raise Exception(f"Brak kursu dla {from_cur} lub {to_cur}")
     return amount * rates[from_cur] / rates[to_cur]
 
+
 def compute_settlement_matrix(transactions, main_currency, rates):
     people = set()
-    for item in transactions:
-        people.add(item["payer"])
-        for b in item["beneficiaries"]:
+    for tx in transactions:
+        people.add(tx['payer'])
+        for b in tx.get('beneficiaries', []):
             people.add(b)
     people = list(people)
-    paid = defaultdict(float)
-    owes = defaultdict(float)
-    for item in transactions:
-        amt = float(item.get("amount", 0))
-        payer = item["payer"]
-        bens = item.get("beneficiaries", [])
-        tx_cur = item.get("currency", main_currency)
-        amt_conv = convert(amt, tx_cur, main_currency, rates)
+    paid, owes = defaultdict(float), defaultdict(float)
+    for tx in transactions:
+        amt = float(tx.get('amount', 0))
+        payer = tx['payer']
+        bens = tx.get('beneficiaries', [])
+        amt_conv = convert(amt, tx.get('currency', main_currency), main_currency, rates)
         if not bens:
             continue
         share = amt_conv / len(bens)
@@ -131,28 +172,30 @@ def compute_settlement_matrix(transactions, main_currency, rates):
     negatives = {p: -net[p] for p in people if net[p] < -1e-6}
     total_positive = sum(positives.values())
     matrix = {}
-    for deb, owe_amt in negatives.items():
-        matrix[deb] = {}
-        for cred, cred_amt in positives.items():
-            share = (owe_amt * (cred_amt / total_positive)) if total_positive else 0
-            matrix[deb][cred] = round(share, 2)
+    for debtor, owes_amt in negatives.items():
+        matrix[debtor] = {}
+        for creditor, cred_amt in positives.items():
+            matrix[debtor][creditor] = round(
+                owes_amt * (cred_amt / total_positive) if total_positive else 0,
+                2
+            )
     return matrix
 
+
 def get_detailed_settlement(transactions, main_currency, rates):
-    paid = defaultdict(float)
-    owes = defaultdict(float)
-    people = set()
-    for t in transactions:
-        payer = t.get('payer')
-        amount = float(t.get('amount', 0))
-        tx_cur = t.get('currency', main_currency)
-        amount_conv = convert(amount, tx_cur, main_currency, rates)
-        bens = t.get('beneficiaries', [])
+    paid, owes, people = defaultdict(float), defaultdict(float), set()
+    for tx in transactions:
+        payer = tx.get('payer')
+        amt = float(tx.get('amount', 0))
+        amt_conv = convert(
+            amt, tx.get('currency', main_currency), main_currency, rates
+        )
+        bens = tx.get('beneficiaries', [])
         people.add(payer)
         for b in bens:
             people.add(b)
-        share = amount_conv / len(bens) if bens else 0
-        paid[payer] += amount_conv
+        share = amt_conv / len(bens) if bens else 0
+        paid[payer] += amt_conv
         for b in bens:
             owes[b] += share
     detailed = {}
@@ -164,20 +207,24 @@ def get_detailed_settlement(transactions, main_currency, rates):
         }
     return detailed
 
+
 def get_lodging_summary(transactions, main_currency, rates):
     summary = {}
     for tx in transactions:
-        if 'nocleg' in tx.get('description', '').lower():
-            amount = float(tx.get('amount', 0))
-            tx_cur = tx.get('currency', main_currency)
-            amount_conv = convert(amount, tx_cur, main_currency, rates)
+        desc = tx.get('description', '').lower()
+        if 'nocleg' in desc:
+            amt = float(tx.get('amount', 0))
+            amt_conv = convert(
+                amt, tx.get('currency', main_currency), main_currency, rates
+            )
             bens = tx.get('beneficiaries', [])
             if bens:
-                share = amount_conv / len(bens)
+                share = amt_conv / len(bens)
                 for b in bens:
                     summary[b] = summary.get(b, 0) + share
     return {k: round(v, 2) for k, v in summary.items()}
 
+# --- Routes ---
 @app.route('/', methods=['GET', 'POST'])
 @login_required
 def index():
@@ -366,21 +413,21 @@ def index():
         download_currency=download_currency
     )
 
-@app.route('/download', methods=['GET', 'POST'])
+@app.route('/download', methods=['GET'])
 @login_required
 def download_json():
-    """Original JSON download endpoint"""
     user = get_user()
     main_currency = user.get('main_currency', 'PLN')
-    currency_rates = user.get('currency_rates', {"PLN": 1.0})
-    docs = list(transactions_col.find({'user_id': session['user_id']}))
+    rates = user.get('currency_rates', {'PLN': 1.0})
+    docs = list(get_transactions_collection().find({'user_id': session['user_id']}))
     out = []
-    to_cur = request.args.get('currency') or main_currency
+    to_cur = request.args.get('currency', main_currency)
     for d in docs:
         amt = float(d.get('amount', 0))
-        from_cur = d.get('currency', main_currency)
         try:
-            conv_amt = convert(amt, from_cur, to_cur, currency_rates)
+            conv_amt = convert(
+                amt, d.get('currency', main_currency), to_cur, rates
+            )
         except Exception:
             conv_amt = amt
         out.append({
@@ -390,34 +437,33 @@ def download_json():
             'beneficiaries': d.get('beneficiaries', []),
             'description': d.get('description', '')
         })
-    buf = io.BytesIO(json.dumps(out, ensure_ascii=False, indent=2).encode('utf-8'))
+    buf = io.BytesIO(
+        json.dumps(out, ensure_ascii=False, indent=2).encode('utf-8')
+    )
     buf.seek(0)
     flash(f'Pobrano dane w walucie {to_cur}.', 'info')
     return send_file(
-        buf,
-        mimetype='application/json',
-        as_attachment=True,
+        buf, mimetype='application/json', as_attachment=True,
         download_name=f'transactions_{to_cur}.json'
     )
 
 @app.route('/download-report', methods=['GET'])
 @login_required
 def download_report():
-    """HTML report endpoint"""
     user = get_user()
     main_currency = user.get('main_currency', 'PLN')
-    currency_rates = user.get('currency_rates', {"PLN": 1.0})
+    rates = user.get('currency_rates', {'PLN': 1.0})
     transactions = fetch_transactions(session['user_id'])
-    matrix = compute_settlement_matrix(transactions, main_currency, currency_rates)
-    detailed = get_detailed_settlement(transactions, main_currency, currency_rates)
-    lodging = get_lodging_summary(transactions, main_currency, currency_rates)
-    positives = sorted(p for p, d in detailed.items() if d['net'] > 0)
-    negatives = sorted(p for p, d in detailed.items() if d['net'] < 0)
+    matrix = compute_settlement_matrix(transactions, main_currency, rates)
+    detailed = get_detailed_settlement(transactions, main_currency, rates)
+    lodging = get_lodging_summary(transactions, main_currency, rates)
+    positives = sorted([p for p, d in detailed.items() if d['net'] > 0])
+    negatives = sorted([p for p, d in detailed.items() if d['net'] < 0])
 
     for p, data in detailed.items():
         data['verb'] = get_gender_verb(p, data['paid'])
 
-    # Bar chart
+    # Net balance bar chart
     fig, ax = plt.subplots()
     names = list(detailed.keys())
     nets = [detailed[p]['net'] for p in names]
@@ -425,7 +471,11 @@ def download_report():
     ax.set_title('Saldo netto uczestników')
     ax.set_ylabel(main_currency)
     for bar, net in zip(bars, nets):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f'{net:.2f}', ha='center', va='bottom')
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(), f'{net:.2f}',
+            ha='center', va='bottom'
+        )
     plt.tight_layout()
     buf1 = io.BytesIO()
     fig.savefig(buf1, format='png')
@@ -433,7 +483,7 @@ def download_report():
     buf1.seek(0)
     detailed_chart = base64.b64encode(buf1.read()).decode('utf-8')
 
-    # Pie chart
+    # Lodging pie chart
     if lodging:
         fig2, ax2 = plt.subplots()
         names2 = list(lodging.keys())
@@ -453,7 +503,8 @@ def download_report():
         'report.html', matrix=matrix, detailed=detailed,
         lodging=lodging, positives=positives,
         negatives=negatives, main_currency=main_currency,
-        detailed_chart=detailed_chart, lodging_chart=lodging_chart
+        detailed_chart=detailed_chart,
+        lodging_chart=lodging_chart
     )
     buf = io.BytesIO(rendered.encode('utf-8'))
     buf.seek(0)
@@ -465,3 +516,4 @@ def download_report():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
