@@ -18,9 +18,20 @@ MONGODB_URI = os.getenv(
     'MONGODB_URI',
     "mongodb+srv://janmichalak78:W9DJ4jAcjjVXFYPp@cluster0.gk8zvxq.mongodb.net/settlement_db?retryWrites=true&w=majority"
 )
-
 client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-db = client['settlement_db']
+
+
+
+def get_db():
+    global client
+    if client is None:
+        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+    return client.settlement_db
+
+# everywhere you used `db = client['settlement_db']`,
+# instead do:
+db = get_db()
+# db = client['settlement_db']
 transactions_col = db['transactions']
 users_col = db['users']
 
