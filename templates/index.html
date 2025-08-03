@@ -2,13 +2,6 @@
 {% block title %}Kalkulator rozliczeń - Strona główna{% endblock %}
 {% block content %}
 
-<!-- Stały przycisk do archiwum -->
-<div class="mb-4 text-end">
-  <a href="{{ url_for('archive_list') }}" class="btn btn-outline-secondary">
-    <i class="fa-solid fa-box-archive"></i> Archiwum wycieczek
-  </a>
-</div>
-
 <!-- Powiadomienia -->
 {% if errors %}
   <div class="alert alert-danger text-center mt-3">{{ errors }}</div>
@@ -288,44 +281,6 @@
     {% endif %}
   </div>
 </div>
-
-<div class="mt-4 mb-3 text-end">
-  <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#archiveTripModal">
-    <i class="fa-solid fa-box-archive"></i> Zakończ i archiwizuj wycieczkę
-  </button>
-  <a href="{{ url_for('archive_list') }}" class="btn btn-link ms-2">Archiwum</a>
-</div>
-
-<div class="modal fade" id="archiveTripModal" tabindex="-1" aria-labelledby="archiveTripModalLabel" aria-hidden="true">
-  <div class="modal-dialog">
-    <form method="post" action="{{ url_for('archive_trip') }}">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="archiveTripModalLabel">Archiwizuj wycieczkę</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Zamknij"></button>
-        </div>
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label">Nazwa wycieczki</label>
-            <input type="text" name="trip_name" class="form-control" required placeholder="np. Alicante 2024">
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Opis (opcjonalnie)</label>
-            <textarea name="trip_desc" class="form-control" rows="2" placeholder="Dodatkowe info"></textarea>
-          </div>
-          <div class="alert alert-info">
-            Zarchiwizowanie wycieczki wyczyści wszystkie bieżące transakcje. Archiwum zawsze możesz podejrzeć z menu!
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
-          <button type="submit" class="btn btn-primary">Archiwizuj</button>
-        </div>
-      </div>
-    </form>
-  </div>
-</div>
-
 {% endif %}
 
 {% endblock %}
