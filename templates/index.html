@@ -138,7 +138,7 @@
           <tr>
             <td>{{ loop.index0 }}</td>
             <td>{{ tx.payer }}</td>
-            <td>{{ "%.2f"|format(tx.amount) }}</td>
+            <td>{{ "%.2f"|format((tx.amount|default(0)|string).replace(',', '.')|float) }}</td>
             <td>{{ tx.currency }}</td>
             <td>{{ tx.beneficiaries | join(', ') }}</td>
             <td>{{ tx.description }}</td>
@@ -217,7 +217,10 @@
         <thead class="table-light"><tr><th>Osoba</th><th>Kwota za noclegi ({{ main_currency }})</th></tr></thead>
         <tbody>
           {% for person, total in lodging_summary.items() %}
-          <tr><td>{{ person }}</td><td>{{ "%.2f"|format(total) }}</td></tr>
+          <tr>
+            <td>{{ person }}</td>
+            <td>{{ "%.2f"|format((total|default(0)|string).replace(',', '.')|float) }}</td>
+          </tr>
           {% endfor %}
         </tbody>
       </table>
@@ -240,9 +243,13 @@
           {% for person, d in detailed_settlement.items() %}
           <tr>
             <td>{{ person }}</td>
-            <td>{{ "%.2f"|format(d.paid) }}</td>
-            <td>{{ "%.2f"|format(d.owes) }}</td>
-            <td><span class="{% if d.net < 0 %}text-danger{% elif d.net > 0 %}text-success{% endif %}">{{ "%.2f"|format(d.net) }}</span></td>
+            <td>{{ "%.2f"|format((d.paid|default(0)|string).replace(',', '.')|float) }}</td>
+            <td>{{ "%.2f"|format((d.owes|default(0)|string).replace(',', '.')|float) }}</td>
+            <td>
+              <span class="{% if d.net < 0 %}text-danger{% elif d.net > 0 %}text-success{% endif %}">
+                {{ "%.2f"|format((d.net|default(0)|string).replace(',', '.')|float) }}
+              </span>
+            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -270,7 +277,9 @@
           <tr>
             <td>{{ neg }}</td>
             {% for pos in positives %}
-            <td>{{ "%.2f"|format(settlement_matrix[neg][pos] if settlement_matrix[neg][pos] is defined else 0) }}</td>
+            <td>
+              {{ "%.2f"|format(((settlement_matrix[neg][pos] if settlement_matrix[neg][pos] is defined else 0)|string).replace(',', '.')|float) }}
+            </td>
             {% endfor %}
           </tr>
           {% endfor %}
