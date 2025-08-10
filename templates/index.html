@@ -72,6 +72,56 @@
   </div>
 </div>
 
+<!-- WYBÓR WYJAZDU / ZARZĄDZANIE -->
+<div class="card shadow mt-3">
+  <div class="card-header">
+    <i class="fa-solid fa-suitcase-rolling"></i> Wyjazdy
+  </div>
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label">Aktywny wyjazd:</label>
+        <form method="post" class="input-group">
+          <select name="trip_id" class="form-select">
+            {% for t in non_archived_trips %}
+              <option value="{{ t._id_str }}" {% if active_trip_id == t._id_str %}selected{% endif %}>
+                {{ t.name }}{% if t.description %} — {{ t.description }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <button type="submit" name="action" value="switch_trip" class="btn btn-outline-secondary">Przełącz</button>
+        </form>
+        <div class="form-text mt-1">transakcje poniżej dotyczą wyłącznie aktywnego wyjazdu</div>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label">Nowy wyjazd:</label>
+        <form method="post" class="row g-2">
+          <div class="col-md-6">
+            <input type="text" name="trip_name" class="form-control" placeholder="np. Norwegia 2025">
+          </div>
+          <div class="col-md-6">
+            <input type="text" name="trip_desc" class="form-control" placeholder="opis (opcjonalnie)">
+          </div>
+          <div class="col-12">
+            <button type="submit" name="action" value="create_trip" class="btn btn-primary">
+              <i class="fa-solid fa-plus"></i> Utwórz i ustaw
+            </button>
+          </div>
+        </form>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label d-block">Archiwizacja:</label>
+        <form method="post">
+          <input type="hidden" name="trip_id" value="{{ active_trip_id }}">
+          <button type="submit" name="action" value="archive_trip" class="btn btn-warning w-100">
+            <i class="fa-solid fa-box-archive"></i> Archiwizuj aktywny
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Dodawanie / edycja transakcji -->
 <div class="card shadow">
   <div class="card-header">
@@ -291,5 +341,53 @@
   </div>
 </div>
 {% endif %}
+
+<!-- ARCHIWUM WYJAZDÓW -->
+<div class="card shadow mt-3" style="background:#fcfcfd;">
+  <div class="card-header">
+    <i class="fa-solid fa-archive"></i> Archiwum wyjazdów
+  </div>
+  <div class="card-body">
+    {% if archived_trips %}
+      <table class="table table-bordered table-hover">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>Nazwa</th>
+            <th>Opis</th>
+            <th>Zarchiwizowano</th>
+            <th>Operacje</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in archived_trips %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ t.name }}</td>
+            <td>{{ t.description }}</td>
+            <td>
+              {% if t.archived_at %}
+                {{ t.archived_at.strftime('%Y-%m-%d %H:%M') }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" class="d-inline">
+                <input type="hidden" name="trip_id" value="{{ t._id_str }}">
+                <button type="submit" name="action" value="restore_trip" class="btn btn-sm btn-success">
+                  <i class="fa-solid fa-rotate-left"></i> Przywróć
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="text-center mb-0">brak zarchiwizowanych wyjazdów</p>
+    {% endif %}
+  </div>
+</div>
 
 {% endblock %}
