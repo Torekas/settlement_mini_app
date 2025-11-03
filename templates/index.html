@@ -10,7 +10,7 @@
 <!-- Ustawienia walut i kursów -->
 <div class="card shadow">
   <div class="card-header">
-    <i class="fa-solid fa-coins"></i> Ustawienia walut i kursów
+    <i class="fa-solid fa-coins"></i> Ustawienia walut i kursów (dla aktywnego wyjazdu)
   </div>
   <div class="card-body">
     <form method="post" class="row g-2 align-items-end mb-2">
@@ -25,6 +25,7 @@
       <div class="col-md-2">
         <button type="submit" name="action" value="set_main_currency" class="btn btn-primary w-100">Ustaw jako główną</button>
       </div>
+      <div class="form-text">zmiany dotyczą tylko: <b>{{ active_trip.name }}</b></div>
     </form>
     <form method="post" class="row g-2 align-items-end mb-1">
       <div class="col-md-3">
@@ -170,90 +171,6 @@
   </div>
 </div>
 
-<!-- Bezpośrednie spłaty -->
-<div class="card shadow">
-  <div class="card-header">
-    <i class="fa-solid fa-hand-holding-dollar"></i> Bezpośrednie spłaty między uczestnikami
-  </div>
-  <div class="card-body">
-    <form method="post" class="row g-3 align-items-end">
-      <div class="col-md-3">
-        <label class="form-label" for="payment_from">Kto zapłacił</label>
-        <input type="text" class="form-control" id="payment_from" name="payment_from" placeholder="np. Jan" required>
-      </div>
-      <div class="col-md-3">
-        <label class="form-label" for="payment_to">Komu</label>
-        <input type="text" class="form-control" id="payment_to" name="payment_to" placeholder="np. Anna" required>
-      </div>
-      <div class="col-md-2">
-        <label class="form-label" for="payment_amount">Kwota</label>
-        <input type="text" class="form-control" id="payment_amount" name="payment_amount" placeholder="np. 50" required>
-      </div>
-      <div class="col-md-2">
-        <label class="form-label" for="payment_currency">Waluta</label>
-        <select class="form-select" id="payment_currency" name="payment_currency">
-          {% for cur in available_currencies %}
-            <option value="{{ cur }}">{{ cur }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-4">
-        <label class="form-label" for="payment_note">Notatka (opcjonalnie)</label>
-        <input type="text" class="form-control" id="payment_note" name="payment_note" placeholder="np. Zwrot za paliwo">
-      </div>
-      <div class="col-md-12">
-        <button type="submit" name="action" value="add_payment" class="btn btn-success">
-          <i class="fa-solid fa-handshake"></i> Zapisz spłatę
-        </button>
-      </div>
-    </form>
-    <div class="form-text mt-2">
-      Spłaty pomniejszają saldo dłużnika i zwiększają saldo odbiorcy. W kolumnie
-      <em>Bezpośrednie spłaty</em> w podsumowaniu wartości są pokazane w walucie głównej.
-    </div>
-
-    <div class="mt-4">
-      {% if payments %}
-        <table class="table table-bordered table-hover">
-          <thead class="table-light">
-            <tr>
-              <th>#</th>
-              <th>Kto zapłacił</th>
-              <th>Komu</th>
-              <th>Kwota</th>
-              <th>Waluta</th>
-              <th>Notatka</th>
-              <th>Operacje</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for pay in payments %}
-            <tr>
-              <td>{{ loop.index }}</td>
-              <td>{{ pay['from'] }}</td>
-              <td>{{ pay['to'] }}</td>
-              <td>{{ "%.2f"|format((pay['amount']|default(0)|string).replace(',', '.')|float) }}</td>
-              <td>{{ pay['currency'] }}</td>
-              <td>{{ pay['note'] }}</td>
-              <td>
-                <form method="post" class="d-inline">
-                  <input type="hidden" name="payment_id" value="{{ pay.id }}">
-                  <button type="submit" name="action" value="delete_payment" class="btn btn-sm btn-danger icon-btn" title="Usuń">
-                    <i class="fa-solid fa-trash"></i>
-                  </button>
-                </form>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      {% else %}
-        <p class="text-center mb-0">Brak zapisanych spłat.</p>
-      {% endif %}
-    </div>
-  </div>
-</div>
-
 <!-- Lista transakcji -->
 <div class="card shadow">
   <div class="card-header">
@@ -372,26 +289,13 @@
   <div class="card-body">
     {% if detailed_settlement %}
       <table class="table table-bordered">
-        <thead class="table-light">
-          <tr>
-            <th>Osoba</th>
-            <th>Wpłacone ({{ main_currency }})</th>
-            <th>Udział</th>
-            <th>Bezpośrednie spłaty ({{ main_currency }})</th>
-            <th>Saldo netto</th>
-          </tr>
-        </thead>
+        <thead class="table-light"><tr><th>Osoba</th><th>Wpłacone ({{ main_currency }})</th><th>Udział</th><th>Saldo netto</th></tr></thead>
         <tbody>
           {% for person, d in detailed_settlement.items() %}
           <tr>
             <td>{{ person }}</td>
             <td>{{ "%.2f"|format((d.paid|default(0)|string).replace(',', '.')|float) }}</td>
             <td>{{ "%.2f"|format((d.owes|default(0)|string).replace(',', '.')|float) }}</td>
-            <td>
-              <span class="{% if d.settled < 0 %}text-danger{% elif d.settled > 0 %}text-success{% endif %}">
-                {{ "%.2f"|format((d.settled|default(0)|string).replace(',', '.')|float) }}
-              </span>
-            </td>
             <td>
               <span class="{% if d.net < 0 %}text-danger{% elif d.net > 0 %}text-success{% endif %}">
                 {{ "%.2f"|format((d.net|default(0)|string).replace(',', '.')|float) }}
@@ -407,11 +311,101 @@
   </div>
 </div>
 
+<!-- Spłaty (transfery redukujące długi) -->
+<div class="card shadow" style="background:#f8fafb;">
+  <div class="card-header">
+    <i class="fa-solid fa-hand-holding-dollar"></i> Spłaty
+  </div>
+  <div class="card-body">
+    <form method="post" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Dłużnik (od kogo)</label>
+        <input type="text" class="form-control" name="rep_from" placeholder="np. Janek" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Wierzyciel (do kogo)</label>
+        <input type="text" class="form-control" name="rep_to" placeholder="np. Wiktoria" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Kwota</label>
+        <input type="text" class="form-control" name="rep_amount" placeholder="np. 150.00" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Waluta</label>
+        <select name="rep_currency" class="form-select">
+          {% for cur in available_currencies %}
+            <option value="{{ cur }}" {% if cur == main_currency %}selected{% endif %}>{{ cur }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-8">
+        <label class="form-label">Notatka (opcjonalnie)</label>
+        <input type="text" class="form-control" name="rep_note" placeholder="np. przelew 12.11">
+      </div>
+      <div class="col-md-4">
+        <button type="submit" name="action" value="add_repayment" class="btn btn-success w-100">
+          <i class="fa-solid fa-plus"></i> Dodaj spłatę
+        </button>
+      </div>
+    </form>
+
+    <hr>
+
+    {% if repayments %}
+      <table class="table table-bordered table-hover mt-2">
+        <thead class="table-light">
+          <tr>
+            <th>#</th><th>Od</th><th>Do</th><th>Kwota</th><th>Waluta</th><th>Notatka</th><th>Data</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in repayments %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ r.from }}</td>
+            <td>{{ r.to }}</td>
+            <td>{{ "%.2f"|format((r.amount|default(0)|string).replace(',', '.')|float) }}</td>
+            <td>{{ r.currency }}</td>
+            <td>{{ r.note }}</td>
+            <td>{% if r.created_at %}{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}</td>
+            <td>
+              <form method="post" class="d-inline">
+                <input type="hidden" name="rep_id" value="{{ r.id }}">
+                <button type="submit" name="action" value="delete_repayment" class="btn btn-sm btn-danger icon-btn" title="Usuń">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% if repayments_leftover and repayments_leftover|length > 0 %}
+        <div class="alert alert-warning mt-2">
+          <b>uwaga:</b> wykryto nadpłaty spłat względem bieżących długów par:
+          <ul class="mb-0">
+            {% for pair, val in repayments_leftover.items() %}
+              {% set deb = pair[0] %}{% set cred = pair[1] %}
+              <li>{{ deb }} → {{ cred }}: nadpłacone {{ "%.2f"|format((val|string).replace(',', '.')|float) }} {{ main_currency }}</li>
+            {% endfor %}
+          </ul>
+          (nie rozdzielamy nadpłat automatycznie na innych wierzycieli)
+        </div>
+      {% endif %}
+
+    {% else %}
+      <p class="text-center mb-0">brak zarejestrowanych spłat.</p>
+    {% endif %}
+  </div>
+</div>
+
+
 <!-- Macierz rozliczeń -->
 {% if settlement_matrix %}
 <div class="card shadow" style="background: #f8fafb;">
   <div class="card-header">
-    <i class="fa-solid fa-table"></i> Macierz rozliczeń
+    <i class="fa-solid fa-table"></i> Macierz rozliczeń (po uwzględnieniu spłat)
   </div>
   <div class="card-body">
     {% if negatives and positives %}
@@ -425,7 +419,16 @@
             <td>{{ neg }}</td>
             {% for pos in positives %}
             <td>
-              {{ "%.2f"|format(((settlement_matrix[neg][pos] if settlement_matrix[neg][pos] is defined else 0)|string).replace(',', '.')|float) }}
+              {% set cell = (settlement_matrix[neg][pos] if settlement_matrix[neg][pos] is defined else 0) %}
+              {% set key = neg ~ '|' ~ pos %}
+              <div class="d-flex align-items-center justify-content-between gap-2">
+                <span>{{ "%.2f"|format((cell|string).replace(',', '.')|float) }}</span>
+                {% if repayments_leftover_map and repayments_leftover_map.get(key) %}
+                  <span class="badge text-bg-warning" title="nadpłata względem długu pary">
+                    +{{ "%.2f"|format((repayments_leftover_map.get(key)|string).replace(',', '.')|float) }}
+                  </span>
+                {% endif %}
+              </div>
             </td>
             {% endfor %}
           </tr>

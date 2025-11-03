@@ -64,6 +64,42 @@
         <p>Brak transakcji oznaczonych jako nocleg.</p>
       {% endif %}
     </div>
+    <h3>spłaty</h3>
+    {% if repayments %}
+    <table class="table table-bordered">
+      <thead class="table-light">
+        <tr><th>#</th><th>Od</th><th>Do</th><th>Kwota</th><th>Waluta</th><th>Notatka</th><th>Data</th></tr>
+      </thead>
+      <tbody>
+      {% for r in repayments %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ r.from }}</td>
+          <td>{{ r.to }}</td>
+          <td>{{ "%.2f"|format((r.amount|default(0)|string).replace(',', '.')|float) }}</td>
+          <td>{{ r.currency }}</td>
+          <td>{{ r.note }}</td>
+          <td>{% if r.created_at %}{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>brak spłat.</p>
+    {% endif %}
+
+    {% if repayments_leftover and repayments_leftover|length > 0 %}
+    <p><b>uwaga:</b> nadpłaty spłat względem długu par:</p>
+    <ul>
+      {% for pair, val in repayments_leftover.items() %}
+        {% set deb = pair[0] %}{% set cred = pair[1] %}
+        <li>{{ deb }} → {{ cred }}: {{ "%.2f"|format((val|string).replace(',', '.')|float) }} {{ main_currency }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <h3>macierz rozliczeń (po spłatach)</h3>
+    <!-- dalej użyj tej samej tabeli co na stronie głównej -->
 
     <div class="card">
       <h2>Macierz rozliczeń</h2>
@@ -74,10 +110,29 @@
           </thead>
           <tbody>
             {% for deb, row in matrix.items() %}
-              <tr><td><strong>{{ deb }}</strong></td>{% for cred in positives %}<td>{{ '%.2f'|format(row.get(cred, 0)) }}</td>{% endfor %}</tr>
+            <tr>
+              <td><strong>{{ deb }}</strong></td>
+              {% for cred in positives %}
+                {% set cell = row.get(cred, 0) %}
+                {% set key = deb ~ '|' ~ cred %}
+                <td>
+                  <span>{{ '%.2f'|format((cell|string).replace(',', '.')|float) }}</span>
+                  {% if repayments_leftover_map and repayments_leftover_map.get(key) %}
+                    <span style="display:inline-block;margin-left:.4rem;padding:.2rem .4rem;border-radius:.35rem;background:#ffc107;color:#212529;"
+                          title="nadpłata względem długu pary">
+                      +{{ '%.2f'|format((repayments_leftover_map.get(key)|string).replace(',', '.')|float) }}
+                    </span>
+                  {% endif %}
+                </td>
+              {% endfor %}
+            </tr>
             {% endfor %}
+
           </tbody>
         </table>
+        <p class="form-text mt-1">
+          wartości w komórkach to kwoty pozostałe po spłatach; żółta etykieta „+X” oznacza nadpłatę A→B ponad bieżący dług tej pary (nie rozdzielamy jej automatycznie).
+        </p>
       </div>
     </div>
 

@@ -6,9 +6,7 @@ from datetime import datetime
 
 from flask import Flask, render_template, request, redirect, url_for, send_file, session, flash
 from pymongo import MongoClient
-from pymongo.errors import PyMongoError
 from bson.objectid import ObjectId
-from bson.errors import InvalidId
 from collections import defaultdict
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
@@ -29,8 +27,9 @@ db = client['settlement_db']
 # kolekcje
 transactions_col = db['transactions']
 users_col = db['users']
-trips_col = db['trips']
-payments_col = db['payments']
+trips_col = db['trips']  # NEW
+repayments_col = db['repayments']  # NEW
+
 
 SUPPORTED_CURRENCIES = ["PLN", "EUR", "USD", "NOK", "GBP", "CZK", "CHF", "SEK", "DKK"]
 
@@ -51,29 +50,18 @@ def register():
         password = request.form.get('password', '')
         if not username or not password:
             flash('Nazwa użytkownika i hasło są wymagane.', 'danger')
-            return render_template('register.html')
-        try:
-            existing = users_col.find_one({'username': username})
-        except PyMongoError as exc:
-            report_db_issue('rejestracji - sprawdzanie unikalności użytkownika', exc)
-            return render_template('register.html')
-        if existing:
+        elif users_col.find_one({'username': username}):
             flash('Użytkownik już istnieje.', 'danger')
         else:
-            return render_template('register.html')
-        pw_hash = generate_password_hash(password)
-        try:
+            pw_hash = generate_password_hash(password)
             users_col.insert_one({
                 'username': username,
                 'password': pw_hash,
                 'main_currency': "PLN",
                 'currency_rates': {"PLN": 1.0, "EUR": 4.0, "USD": 3.8}
             })
-        except PyMongoError as exc:
-            report_db_issue('rejestracji - zapisywanie użytkownika', exc)
-            return render_template('register.html')
-        flash('Rejestracja zakończona sukcesem! Zaloguj się.', 'success')
-        return redirect(url_for('login'))
+            flash('Rejestracja zakończona sukcesem! Zaloguj się.', 'success')
+            return redirect(url_for('login'))
     return render_template('register.html')
 
 
@@ -82,22 +70,13 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        try:
-            user = users_col.find_one({'username': username})
-        except PyMongoError as exc:
-            report_db_issue('logowania - wyszukiwanie użytkownika', exc)
-            return render_template('login.html')
+        user = users_col.find_one({'username': username})
         if not user or not check_password_hash(user['password'], password):
             flash('Nieprawidłowe dane logowania.', 'danger')
         else:
             session['user_id'] = str(user['_id'])
             session['username'] = username
-            active_trip = ensure_active_trip()  # NEW - ustaw aktywny wyjazd
-            if not active_trip or not active_trip.get('_id'):
-                session.pop('user_id', None)
-                session.pop('username', None)
-                session.pop('active_trip_id', None)
-                return render_template('login.html')
+            ensure_active_trip()  # NEW - ustaw aktywny wyjazd
             flash(f'Witaj, {username}!', 'success')
             return redirect(url_for('index'))
     return render_template('login.html')
@@ -109,65 +88,60 @@ def logout():
     flash('Wylogowano.', 'info')
     return redirect(url_for('login'))
 
-def report_db_issue(context, exc):
-    app.logger.exception('Błąd bazy danych podczas %s: %s', context, exc)
-    flash('Wystąpił problem z połączeniem z bazą danych. Spróbuj ponownie później.', 'danger')
 
 def get_user():
-    try:
-        return users_col.find_one({'_id': ObjectId(session['user_id'])})
-    except (InvalidId, KeyError):
-        app.logger.warning('Niepoprawne ID użytkownika w sesji podczas pobierania użytkownika.')
-        return None
-    except PyMongoError as exc:
-        report_db_issue('pobierania danych użytkownika', exc)
-        return None
+    return users_col.find_one({'_id': ObjectId(session['user_id'])})
+
 
 # --- WYJAZDY ---
 
 def ensure_active_trip():
-    """zapewnia, że istnieje aktywny wyjazd w sesji; jeśli nie, tworzy domyślny nienarchiwalny"""
-    user_default_currency = 'PLN'
-    try:
-        user = None
-        if 'user_id' in session:
-            user = users_col.find_one({'_id': ObjectId(session['user_id'])})
-        user_default_currency = (user or {}).get('main_currency', 'PLN')
-        active_trip_id = session.get('active_trip_id')
-        if active_trip_id:
-            try:
-                trip_object_id = ObjectId(active_trip_id)
-            except InvalidId:
-                app.logger.warning('Niepoprawne ID wyjazdu w sesji: %s', active_trip_id)
-                session['active_trip_id'] = None
-            else:
-                t = trips_col.find_one({'_id': trip_object_id, 'user_id': session['user_id']})
-                if t and t.get('archived_at') is None:
-                    if 'main_currency' not in t:
-                        trips_col.update_one({'_id': t['_id']}, {'$set': {'main_currency': user_default_currency}})
-                        t['main_currency'] = user_default_currency
-                    return t
+    if session.get('active_trip_id'):
+        t = trips_col.find_one({'_id': ObjectId(session['active_trip_id']), 'user_id': session['user_id']})
+        if t and t.get('archived_at') is None:
+            # SEED: jeśli stare tripy nie mają pól walutowych – uzupełnij
+            if 'main_currency' not in t or 'currency_rates' not in t:
+                user = users_col.find_one({'_id': ObjectId(session['user_id'])}) or {}
+                trips_col.update_one({'_id': t['_id']}, {'$set': {
+                    'main_currency': t.get('main_currency', user.get('main_currency', 'PLN')),
+                    'currency_rates': t.get('currency_rates', user.get('currency_rates', {"PLN": 1.0}))
+                }})
+                t = trips_col.find_one({'_id': t['_id']})
+            return t
 
-        t = trips_col.find_one({'user_id': session['user_id'], 'archived_at': None}, sort=[('created_at', -1)])
-        if not t:
-            tid = trips_col.insert_one({
-                'user_id': session['user_id'],
-                'name': 'Domyślny wyjazd',
-                'description': '',
-                'archived_at': None,
-                'created_at': datetime.utcnow(),
-                'main_currency': user_default_currency,
-            }).inserted_id
-            t = trips_col.find_one({'_id': tid})
-        elif 'main_currency' not in t:
-            trips_col.update_one({'_id': t['_id']}, {'$set': {'main_currency': user_default_currency}})
-            t['main_currency'] = user_default_currency
-        session['active_trip_id'] = str(t['_id'])
-        return t
-    except PyMongoError as exc:
-        session['active_trip_id'] = session.get('active_trip_id', None)
-        report_db_issue('inicjalizacji aktywnego wyjazdu', exc)
-        return {'_id': None, 'main_currency': user_default_currency}
+    t = trips_col.find_one({'user_id': session['user_id'], 'archived_at': None}, sort=[('created_at', -1)])
+    if not t:
+        # domyślne pola per-trip kopiowane z usera (albo domyślne)
+        user = users_col.find_one({'_id': ObjectId(session['user_id'])}) or {}
+        tid = trips_col.insert_one({
+            'user_id': session['user_id'],
+            'name': 'Domyślny wyjazd',
+            'description': '',
+            'archived_at': None,
+            'created_at': datetime.utcnow(),
+            'main_currency': user.get('main_currency', 'PLN'),
+            'currency_rates': user.get('currency_rates', {"PLN": 1.0})
+        }).inserted_id
+        t = trips_col.find_one({'_id': tid})
+    else:
+        # SEED dla istniejącego, jeśli brak pól
+        update = {}
+        if 'main_currency' not in t:
+            update['main_currency'] = 'PLN'
+        if 'currency_rates' not in t:
+            update['currency_rates'] = {"PLN": 1.0}
+        if update:
+            trips_col.update_one({'_id': t['_id']}, {'$set': update})
+            t = trips_col.find_one({'_id': t['_id']})
+
+    session['active_trip_id'] = str(t['_id'])
+    return t
+
+def get_trip_settings(trip_id):
+    t = trips_col.find_one({'_id': ObjectId(trip_id)})
+    if not t:
+        return 'PLN', {"PLN": 1.0}
+    return t.get('main_currency', 'PLN'), t.get('currency_rates', {"PLN": 1.0})
 
 
 def list_trips(user_id):
@@ -181,6 +155,45 @@ def list_trips(user_id):
 
 
 # --- TRANSAKCJE / LOGIKA ---
+
+def fetch_repayments(user_id, trip_id=None):
+    q = {'user_id': user_id}
+    if trip_id:
+        q['trip_id'] = trip_id
+    docs = list(repayments_col.find(q))
+    rows = []
+    for d in docs:
+        rows.append({
+            'id': str(d['_id']),
+            'from': d.get('from', ''),
+            'to': d.get('to', ''),
+            'amount': float(d.get('amount', 0.0)),
+            'currency': d.get('currency', 'PLN'),
+            'note': d.get('note', ''),
+            'created_at': d.get('created_at')
+        })
+    return rows
+
+
+def aggregate_repayments(repayments, main_currency, rates):
+    """
+    zwraca słownik par (debtor->creditor) -> suma w walucie głównej
+    oraz słownik per-osoba (net wpływ spłat na saldo): +dla dłużnika, -dla wierzyciela
+    """
+    pair_sum = defaultdict(float)
+    per_person = defaultdict(float)
+    for r in repayments:
+        amt_conv = convert(float(r['amount']), r['currency'], main_currency, rates)
+        d = r['from']; c = r['to']
+        if not d or not c or amt_conv <= 0:
+            continue
+        key = (d, c)
+        pair_sum[key] += amt_conv
+        per_person[d] += amt_conv    # dłużnik "podnosi" swoje saldo (mniej ujemne)
+        per_person[c] -= amt_conv    # wierzyciel "obniża" swoje saldo (mniej dodatnie)
+    # zaokrąglenia na prezentację, wewnętrznie trzymajmy float
+    return pair_sum, per_person
+
 
 def fetch_transactions(user_id, trip_id=None):
     query = {'user_id': user_id}
@@ -199,23 +212,6 @@ def fetch_transactions(user_id, trip_id=None):
         })
     return txs
 
-def fetch_payments(user_id, trip_id=None):
-    query = {'user_id': user_id}
-    if trip_id:
-        query['trip_id'] = trip_id
-    docs = list(payments_col.find(query).sort('created_at', -1))
-    payments = []
-    for d in docs:
-        payments.append({
-            'id': str(d['_id']),
-            'from': d.get('from', ''),
-            'to': d.get('to', ''),
-            'amount': d.get('amount', 0),
-            'currency': d.get('currency', 'PLN'),
-            'note': d.get('note', '')
-        })
-    return payments
-
 
 def get_gender_verb(name, amount):
     if name.strip().lower().endswith('a') and not name.strip().lower().endswith('ba'):
@@ -232,21 +228,12 @@ def convert(amount, from_cur, to_cur, rates):
     return amount * rates[from_cur] / rates[to_cur]
 
 
-def compute_settlement_matrix(transactions, payments=None, main_currency='PLN', rates=None):
-    payments = payments or []
-    rates = rates or {"PLN": 1.0}
+def compute_settlement_matrix(transactions, main_currency, rates):
     people = set()
     for item in transactions:
         people.add(item["payer"])
         for b in item["beneficiaries"]:
             people.add(b)
-    for pay in payments:
-        giver = pay.get('from', '').strip()
-        receiver = pay.get('to', '').strip()
-        if giver:
-            people.add(giver)
-        if receiver:
-            people.add(receiver)
     people = list(people)
     paid = defaultdict(float)
     owes = defaultdict(float)
@@ -263,19 +250,6 @@ def compute_settlement_matrix(transactions, payments=None, main_currency='PLN', 
         for b in bens:
             owes[b] += share
     net = {p: paid[p] - owes[p] for p in people}
-    if payments:
-        for pay in payments:
-            giver = pay.get('from', '').strip()
-            receiver = pay.get('to', '').strip()
-            amount = float(pay.get('amount', 0) or 0)
-            pay_cur = pay.get('currency', main_currency)
-            if not giver or not receiver or amount == 0:
-                continue
-            amt_conv = convert(amount, pay_cur, main_currency, rates)
-            if giver:
-                net[giver] = net.get(giver, 0) + amt_conv
-            if receiver:
-                net[receiver] = net.get(receiver, 0) - amt_conv
     positives = {p: net[p] for p in people if net[p] > 1e-6}
     negatives = {p: -net[p] for p in people if net[p] < -1e-6}
     total_positive = sum(positives.values())
@@ -287,10 +261,28 @@ def compute_settlement_matrix(transactions, payments=None, main_currency='PLN', 
             matrix[deb][cred] = round(share, 2)
     return matrix
 
+def apply_repayments_to_matrix(matrix, repayments_pairs):
+    """
+    matrix: dict[debtor][creditor] -> kwota (main_currency)
+    repayments_pairs: dict[(debtor, creditor)] -> suma spłat (main_currency)
+    zwraca (new_matrix, leftover) gdzie leftover to nadpłaty wykraczające poza dług pary (info)
+    """
+    leftover = {}
+    for (deb, cred), rep in repayments_pairs.items():
+        if deb in matrix and cred in matrix[deb]:
+            owed = matrix[deb][cred]
+            if rep <= owed:
+                matrix[deb][cred] = round(owed - rep, 2)
+            else:
+                matrix[deb][cred] = 0.0
+                leftover[(deb, cred)] = round(rep - owed, 2)
+        else:
+            # spłata do pary, która wg bieżącej macierzy nie ma już długu
+            leftover[(deb, cred)] = round(rep, 2)
+    return matrix, leftover
 
-def get_detailed_settlement(transactions, payments=None, main_currency='PLN', rates=None):
-    payments = payments or []
-    rates = rates or {"PLN": 1.0}
+
+def get_detailed_settlement(transactions, main_currency, rates):
     paid = defaultdict(float)
     owes = defaultdict(float)
     people = set()
@@ -307,28 +299,12 @@ def get_detailed_settlement(transactions, payments=None, main_currency='PLN', ra
         paid[payer] += amount_conv
         for b in bens:
             owes[b] += share
-    settlements = defaultdict(float)
-    if payments:
-        for pay in payments:
-            giver = pay.get('from', '').strip()
-            receiver = pay.get('to', '').strip()
-            amount = float(pay.get('amount', 0) or 0)
-            pay_cur = pay.get('currency', main_currency)
-            if not giver or not receiver or amount == 0:
-                continue
-            amt_conv = convert(amount, pay_cur, main_currency, rates)
-            settlements[giver] += amt_conv
-            settlements[receiver] -= amt_conv
-            people.add(giver)
-            people.add(receiver)
     detailed = {}
     for p in people:
-        net_total = paid[p] - owes[p] + settlements[p]
         detailed[p] = {
             'paid': round(paid[p], 2),
             'owes': round(owes[p], 2),
-            'net': round(net_total, 2),
-            'settled': round(settlements[p], 2)
+            'net': round(paid[p] - owes[p], 2)
         }
     return detailed
 
@@ -356,17 +332,17 @@ def index():
         flash('Nie znaleziono użytkownika.', 'danger')
         return redirect(url_for('login'))
 
-    user_default_currency = user.get('main_currency', 'PLN')
-
     # wyjazdy
     active_trip = ensure_active_trip()
-    active_trip_id = session.get('active_trip_id')
+    active_trip_id = session['active_trip_id']
+    main_currency, currency_rates = get_trip_settings(active_trip_id)
+    download_currency = main_currency
     non_archived_trips, archived_trips = list_trips(session['user_id'])
 
     edit_id = None
     edit_tx = None
 
-    main_currency = active_trip.get('main_currency', user_default_currency)
+    main_currency = user.get('main_currency', 'PLN')
     currency_rates = user.get('currency_rates', {"PLN": 1.0})
     download_currency = main_currency
 
@@ -383,7 +359,6 @@ def index():
                 'description': desc,
                 'archived_at': None,
                 'created_at': datetime.utcnow(),
-                'main_currency': main_currency,
             }).inserted_id
             session['active_trip_id'] = str(tid)
             flash(f'Utworzono i ustawiono wyjazd: {name}.', 'success')
@@ -501,53 +476,15 @@ def index():
             else:
                 flash('Brak id do usunięcia.', 'danger')
 
-        elif action == 'add_payment':
-            giver = request.form.get('payment_from', '').strip()
-            receiver = request.form.get('payment_to', '').strip()
-            amount_str = request.form.get('payment_amount', '').strip()
-            pay_cur = request.form.get('payment_currency', main_currency)
-            note = request.form.get('payment_note', '').strip()
-            if not giver or not receiver or not amount_str:
-                flash('Płatnik, odbiorca i kwota są wymagane dla rozliczenia.', 'danger')
-            else:
-                try:
-                    amount = float(amount_str.replace(',', '.'))
-                    payments_col.insert_one({
-                        'user_id': session['user_id'],
-                        'trip_id': session['active_trip_id'],
-                        'from': giver,
-                        'to': receiver,
-                        'amount': amount,
-                        'currency': pay_cur,
-                        'note': note,
-                        'created_at': datetime.utcnow()
-                    })
-                    flash('Dodano bezpośrednią spłatę.', 'success')
-                    return redirect(url_for('index'))
-                except Exception:
-                    flash('Nieprawidłowa kwota rozliczenia.', 'danger')
-
-        elif action == 'delete_payment':
-            pay_id = request.form.get('payment_id')
-            if pay_id:
-                payments_col.delete_one({'_id': ObjectId(pay_id), 'user_id': session['user_id']})
-                flash('Usunięto spłatę.', 'info')
-                return redirect(url_for('index'))
-            else:
-                flash('Brak id spłaty do usunięcia.', 'danger')
-
         elif action == 'set_main_currency':
             new_main = request.form.get('main_currency')
             if new_main and new_main in currency_rates:
-                trips_col.update_one(
-                    {'_id': ObjectId(active_trip_id), 'user_id': session['user_id']},
-                    {'$set': {'main_currency': new_main}}
-                )
-                flash(f'Zmieniono walutę główną na {new_main}.', 'success')
+                trips_col.update_one({'_id': ObjectId(session['active_trip_id']), 'user_id': session['user_id']},
+                         {'$set': {'main_currency': new_main}})
+                flash(f'Zmieniono walutę główną na {new_main} (tylko dla tego wyjazdu).', 'success')
                 main_currency = new_main
-                active_trip['main_currency'] = new_main
             else:
-                flash("Brak kursu dla tej waluty – najpierw ustaw kurs!", 'danger')
+                flash("Brak kursu dla tej waluty – najpierw ustaw kurs w tym wyjeździe!", 'danger')
 
         elif action == 'set_rate':
             cur = request.form.get('currency_code', '').upper()
@@ -555,9 +492,13 @@ def index():
             try:
                 val = float(val.replace(',', '.'))
                 if cur and val > 0:
-                    currency_rates[cur] = val
-                    users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'currency_rates': currency_rates}})
-                    flash(f'Ustawiono kurs {cur}: {val}', 'success')
+                    # zaktualizuj dict w tripie
+                    _, current_rates = get_trip_settings(session['active_trip_id'])
+                    current_rates[cur] = val
+                    trips_col.update_one({'_id': ObjectId(session['active_trip_id']), 'user_id': session['user_id']},
+                             {'$set': {'currency_rates': current_rates}})
+                    flash(f'Ustawiono kurs {cur}: {val} (dla tego wyjazdu).', 'success')
+                    currency_rates = current_rates
                 else:
                     flash("Nieprawidłowy kod waluty lub wartość.", 'danger')
             except Exception:
@@ -565,10 +506,14 @@ def index():
 
         elif action == 'del_rate':
             cur = request.form.get('del_currency_code', '').upper()
-            if cur in currency_rates and cur != main_currency:
-                currency_rates.pop(cur)
-                users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'currency_rates': currency_rates}})
-                flash(f'Usunięto kurs waluty {cur}.', 'info')
+            # nie pozwalamy usuwać waluty głównej
+            if cur and cur != main_currency and cur in currency_rates:
+                new_rates = dict(currency_rates)
+                new_rates.pop(cur, None)
+                trips_col.update_one({'_id': ObjectId(session['active_trip_id']), 'user_id': session['user_id']},
+                                     {'$set': {'currency_rates': new_rates}})
+                flash(f'Usunięto kurs waluty {cur} (tylko w tym wyjeździe).', 'info')
+                currency_rates = new_rates
             else:
                 flash("Nie można usunąć tej waluty lub jest ona walutą główną.", 'danger')
 
@@ -577,8 +522,7 @@ def index():
 
         elif action == 'reset':
             transactions_col.delete_many({'user_id': session['user_id'], 'trip_id': session['active_trip_id']})
-            payments_col.delete_many({'user_id': session['user_id'], 'trip_id': session['active_trip_id']})
-            flash('Wyczyszczono wszystkie transakcje i spłaty tego wyjazdu.', 'warning')
+            flash('Wyczyszczono wszystkie transakcje tego wyjazdu.', 'warning')
             return redirect(url_for('index'))
 
         elif action == 'import':
@@ -605,24 +549,70 @@ def index():
 
         elif action == 'set_download_currency':
             download_currency = request.form.get('download_currency', main_currency)
+        # --- SPŁATY ---
+        if action == 'add_repayment':
+            deb = request.form.get('rep_from', '').strip()
+            cred = request.form.get('rep_to', '').strip()
+            amount_str = request.form.get('rep_amount', '').strip()
+            cur = request.form.get('rep_currency', main_currency)
+            note = request.form.get('rep_note', '').strip()
+            if not deb or not cred or deb == cred:
+                flash('wskaż poprawnie dłużnika i wierzyciela (różne osoby).', 'danger')
+            else:
+                try:
+                    amount = float(amount_str.replace(',', '.'))
+                    if amount <= 0:
+                        raise ValueError()
+                    repayments_col.insert_one({
+                        'user_id': session['user_id'],
+                        'trip_id': session['active_trip_id'],
+                        'from': deb,
+                        'to': cred,
+                        'amount': amount,
+                        'currency': cur,
+                        'note': note,
+                        'created_at': datetime.utcnow()
+                    })
+                    flash('dodano spłatę.', 'success')
+                    return redirect(url_for('index'))
+                except Exception:
+                    flash('nieprawidłowa kwota spłaty.', 'danger')
+
+        elif action == 'delete_repayment':
+            rep_id = request.form.get('rep_id')
+            if rep_id:
+                repayments_col.delete_one({'_id': ObjectId(rep_id), 'user_id': session['user_id']})
+                flash('usunięto spłatę.', 'info')
+                return redirect(url_for('index'))
+            else:
+                flash('brak id spłaty.', 'danger')
 
     # odśwież dane po POST
-    user = get_user()
-    currency_rates = user.get('currency_rates', {"PLN": 1.0})
-
     active_trip = ensure_active_trip()
-    active_trip_id = session.get('active_trip_id')
-    main_currency = active_trip.get('main_currency', user.get('main_currency', 'PLN'))
+    active_trip_id = session['active_trip_id']
+    main_currency, currency_rates = get_trip_settings(active_trip_id)
     download_currency = request.form.get('download_currency', main_currency)
+
+    # aktywny wyjazd i transakcje
+    active_trip = ensure_active_trip()
+    active_trip_id = session['active_trip_id']
     transactions = fetch_transactions(session['user_id'], active_trip_id)
-    payments = fetch_payments(session['user_id'], active_trip_id)
+
+    repayments = fetch_repayments(session['user_id'], active_trip_id)
 
     try:
-        settlement_matrix = compute_settlement_matrix(transactions, payments, main_currency, currency_rates)
-        detailed = get_detailed_settlement(transactions, payments, main_currency, currency_rates)
+        settlement_matrix = compute_settlement_matrix(transactions, main_currency, currency_rates)
+        detailed = get_detailed_settlement(transactions, main_currency, currency_rates)
         lodging = get_lodging_summary(transactions, main_currency, currency_rates)
         positives = sorted(p for p, d in detailed.items() if d['net'] > 0)
         negatives = sorted(p for p, d in detailed.items() if d['net'] < 0)
+
+        # zastosuj spłaty: najpierw zsumuj pary w walucie głównej
+        rep_pairs, rep_person = aggregate_repayments(repayments, main_currency, currency_rates)
+
+        # odejmij spłaty PO PARACH od macierzy
+        settlement_matrix, repayments_leftover = apply_repayments_to_matrix(settlement_matrix, rep_pairs)
+        repayments_leftover_map = {f"{deb}|{cred}": val for (deb, cred), val in repayments_leftover.items()}
     except Exception as e:
         flash(str(e), 'danger')
         settlement_matrix = None
@@ -630,10 +620,11 @@ def index():
         lodging = {}
         positives = []
         negatives = []
+        repayments = []
+        repayments_leftover = {}
+
 
     available_currencies = list(currency_rates.keys())
-    if main_currency not in available_currencies:
-        available_currencies.append(main_currency)
     download_currency = download_currency if download_currency in available_currencies else main_currency
 
     non_archived_trips, archived_trips = list_trips(session['user_id'])
@@ -653,13 +644,16 @@ def index():
         supported_currencies=SUPPORTED_CURRENCIES,
         available_currencies=available_currencies,
         download_currency=download_currency,
-        payments=payments,
-        # wyjazdy
         non_archived_trips=non_archived_trips,
         archived_trips=archived_trips,
         active_trip=active_trip,
-        active_trip_id=active_trip_id
+        active_trip_id=active_trip_id,
+        # NEW
+        repayments=repayments,
+        repayments_leftover=repayments_leftover,
+        repayments_leftover_map=repayments_leftover_map,   # <-- NOWE
     )
+
 
 
 @app.route('/download', methods=['GET', 'POST'])
@@ -667,10 +661,8 @@ def index():
 def download_json():
     """pobranie JSON tylko dla aktywnego wyjazdu"""
     user = get_user()
-    currency_rates = user.get('currency_rates', {"PLN": 1.0})
     active_trip = ensure_active_trip()
-    main_currency = active_trip.get('main_currency', user.get('main_currency', 'PLN'))
-    # akceptuj zarówno POST z formularza (download_currency), jak i GET ?currency=
+    main_currency, currency_rates = get_trip_settings(session['active_trip_id'])
     to_cur = request.values.get('download_currency') or request.args.get('currency') or main_currency
 
     docs = list(transactions_col.find({'user_id': session['user_id'], 'trip_id': session['active_trip_id']}))
@@ -705,19 +697,25 @@ def download_json():
 def download_report():
     """raport HTML tylko dla aktywnego wyjazdu"""
     user = get_user()
-    currency_rates = user.get('currency_rates', {"PLN": 1.0})
-    active_trip = ensure_active_trip()
-    main_currency = active_trip.get('main_currency', user.get('main_currency', 'PLN'))
-    transactions = fetch_transactions(session['user_id'], session['active_trip_id'])
-    payments = fetch_payments(session['user_id'], session['active_trip_id'])
-    matrix = compute_settlement_matrix(transactions, payments, main_currency, currency_rates)
-    detailed = get_detailed_settlement(transactions, payments, main_currency, currency_rates)
+    active_trip_id = session['active_trip_id']
+    main_currency, currency_rates = get_trip_settings(active_trip_id)
+    transactions = fetch_transactions(session['user_id'], active_trip_id)
+    repayments = fetch_repayments(session['user_id'], active_trip_id)
+    rep_pairs, _ = aggregate_repayments(repayments, main_currency, currency_rates)
+
+    matrix = compute_settlement_matrix(transactions, main_currency, currency_rates)
+    detailed = get_detailed_settlement(transactions, main_currency, currency_rates)
     lodging = get_lodging_summary(transactions, main_currency, currency_rates)
     positives = sorted(p for p, d in detailed.items() if d['net'] > 0)
     negatives = sorted(p for p, d in detailed.items() if d['net'] < 0)
 
+    # płeć-do-czasownika
     for p, data in detailed.items():
         data['verb'] = get_gender_verb(p, data['paid'])
+
+    # zastosuj spłaty do macierzy
+    matrix_after, repayments_leftover = apply_repayments_to_matrix(matrix, rep_pairs)
+    repayments_leftover_map = {f"{deb}|{cred}": val for (deb, cred), val in repayments_leftover.items()}
 
     # wykres słupkowy (saldo)
     fig, ax = plt.subplots()
@@ -752,11 +750,21 @@ def download_report():
         lodging_chart = None
 
     rendered = render_template(
-        'report.html', matrix=matrix, detailed=detailed,
-        lodging=lodging, positives=positives,
-        negatives=negatives, main_currency=main_currency,
-        detailed_chart=detailed_chart, lodging_chart=lodging_chart
+        'report.html',
+        matrix=matrix_after,  # po spłatach
+        detailed=detailed,
+        lodging=lodging,
+        positives=positives,
+        negatives=negatives,
+        main_currency=main_currency,
+        detailed_chart=detailed_chart,
+        lodging_chart=lodging_chart,
+        # NEW:
+        repayments=repayments,
+        repayments_leftover=repayments_leftover,
+    repayments_leftover_map=repayments_leftover_map,   # <-- NOWE
     )
+
     buf = io.BytesIO(rendered.encode('utf-8'))
     buf.seek(0)
     flash('Pobrano raport HTML z podsumowaniami.', 'info')
