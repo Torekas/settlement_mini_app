@@ -35,7 +35,13 @@
       <h2>Podsumowanie szczegółowe</h2>
       <ul class="summary-list">
         {% for person, data in detailed.items() %}
-          <li><strong>{{ person }}</strong>: {{ data.verb }} <strong>{{ data.paid }} {{ main_currency }}</strong>, saldo: <strong>{{ data.net }} {{ main_currency }}</strong></li>
+          <li>
+            <strong>{{ person }}</strong>: {{ data.verb }} <strong>{{ '%.2f'|format(data.paid) }} {{ main_currency }}</strong>,
+            saldo: <strong>{{ '%.2f'|format(data.net) }} {{ main_currency }}</strong>
+            {% if data.settled %}
+              , rozliczenia bezpośrednie: <strong>{{ '%.2f'|format(data.settled) }} {{ main_currency }}</strong>
+            {% endif %}
+          </li>
         {% endfor %}
       </ul>
       <div class="charts">
@@ -68,7 +74,7 @@
           </thead>
           <tbody>
             {% for deb, row in matrix.items() %}
-              <tr><td><strong>{{ deb }}</strong></td>{% for cred in positives %}<td>{{ row.get(cred, 0) }}</td>{% endfor %}</tr>
+              <tr><td><strong>{{ deb }}</strong></td>{% for cred in positives %}<td>{{ '%.2f'|format(row.get(cred, 0)) }}</td>{% endfor %}</tr>
             {% endfor %}
           </tbody>
         </table>

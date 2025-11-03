@@ -27,7 +27,8 @@ db = client['settlement_db']
 # kolekcje
 transactions_col = db['transactions']
 users_col = db['users']
-trips_col = db['trips']  # NEW
+trips_col = db['trips']
+payments_col = db['payments']
 
 SUPPORTED_CURRENCIES = ["PLN", "EUR", "USD", "NOK", "GBP", "CZK", "CHF", "SEK", "DKK"]
 
@@ -95,9 +96,16 @@ def get_user():
 
 def ensure_active_trip():
     """zapewnia, że istnieje aktywny wyjazd w sesji; jeśli nie, tworzy domyślny nienarchiwalny"""
+    user = None
+    if 'user_id' in session:
+        user = users_col.find_one({'_id': ObjectId(session['user_id'])})
+    user_default_currency = (user or {}).get('main_currency', 'PLN')
     if session.get('active_trip_id'):
         t = trips_col.find_one({'_id': ObjectId(session['active_trip_id']), 'user_id': session['user_id']})
         if t and t.get('archived_at') is None:
+            if 'main_currency' not in t:
+                trips_col.update_one({'_id': t['_id']}, {'$set': {'main_currency': user_default_currency}})
+                t['main_currency'] = user_default_currency
             return t
 
     t = trips_col.find_one({'user_id': session['user_id'], 'archived_at': None}, sort=[('created_at', -1)])
@@ -108,9 +116,12 @@ def ensure_active_trip():
             'description': '',
             'archived_at': None,
             'created_at': datetime.utcnow(),
+            'main_currency': user_default_currency,
         }).inserted_id
         t = trips_col.find_one({'_id': tid})
-
+    elif 'main_currency' not in t:
+        trips_col.update_one({'_id': t['_id']}, {'$set': {'main_currency': user_default_currency}})
+        t['main_currency'] = user_default_currency
     session['active_trip_id'] = str(t['_id'])
     return t
 
@@ -144,6 +155,23 @@ def fetch_transactions(user_id, trip_id=None):
         })
     return txs
 
+def fetch_payments(user_id, trip_id=None):
+    query = {'user_id': user_id}
+    if trip_id:
+        query['trip_id'] = trip_id
+    docs = list(payments_col.find(query).sort('created_at', -1))
+    payments = []
+    for d in docs:
+        payments.append({
+            'id': str(d['_id']),
+            'from': d.get('from', ''),
+            'to': d.get('to', ''),
+            'amount': d.get('amount', 0),
+            'currency': d.get('currency', 'PLN'),
+            'note': d.get('note', '')
+        })
+    return payments
+
 
 def get_gender_verb(name, amount):
     if name.strip().lower().endswith('a') and not name.strip().lower().endswith('ba'):
@@ -160,12 +188,21 @@ def convert(amount, from_cur, to_cur, rates):
     return amount * rates[from_cur] / rates[to_cur]
 
 
-def compute_settlement_matrix(transactions, main_currency, rates):
+def compute_settlement_matrix(transactions, payments=None, main_currency='PLN', rates=None):
+    payments = payments or []
+    rates = rates or {"PLN": 1.0}
     people = set()
     for item in transactions:
         people.add(item["payer"])
         for b in item["beneficiaries"]:
             people.add(b)
+    for pay in payments:
+        giver = pay.get('from', '').strip()
+        receiver = pay.get('to', '').strip()
+        if giver:
+            people.add(giver)
+        if receiver:
+            people.add(receiver)
     people = list(people)
     paid = defaultdict(float)
     owes = defaultdict(float)
@@ -182,6 +219,19 @@ def compute_settlement_matrix(transactions, main_currency, rates):
         for b in bens:
             owes[b] += share
     net = {p: paid[p] - owes[p] for p in people}
+    if payments:
+        for pay in payments:
+            giver = pay.get('from', '').strip()
+            receiver = pay.get('to', '').strip()
+            amount = float(pay.get('amount', 0) or 0)
+            pay_cur = pay.get('currency', main_currency)
+            if not giver or not receiver or amount == 0:
+                continue
+            amt_conv = convert(amount, pay_cur, main_currency, rates)
+            if giver:
+                net[giver] = net.get(giver, 0) + amt_conv
+            if receiver:
+                net[receiver] = net.get(receiver, 0) - amt_conv
     positives = {p: net[p] for p in people if net[p] > 1e-6}
     negatives = {p: -net[p] for p in people if net[p] < -1e-6}
     total_positive = sum(positives.values())
@@ -194,7 +244,9 @@ def compute_settlement_matrix(transactions, main_currency, rates):
     return matrix
 
 
-def get_detailed_settlement(transactions, main_currency, rates):
+def get_detailed_settlement(transactions, payments=None, main_currency='PLN', rates=None):
+    payments = payments or []
+    rates = rates or {"PLN": 1.0}
     paid = defaultdict(float)
     owes = defaultdict(float)
     people = set()
@@ -211,12 +263,28 @@ def get_detailed_settlement(transactions, main_currency, rates):
         paid[payer] += amount_conv
         for b in bens:
             owes[b] += share
+    settlements = defaultdict(float)
+    if payments:
+        for pay in payments:
+            giver = pay.get('from', '').strip()
+            receiver = pay.get('to', '').strip()
+            amount = float(pay.get('amount', 0) or 0)
+            pay_cur = pay.get('currency', main_currency)
+            if not giver or not receiver or amount == 0:
+                continue
+            amt_conv = convert(amount, pay_cur, main_currency, rates)
+            settlements[giver] += amt_conv
+            settlements[receiver] -= amt_conv
+            people.add(giver)
+            people.add(receiver)
     detailed = {}
     for p in people:
+        net_total = paid[p] - owes[p] + settlements[p]
         detailed[p] = {
             'paid': round(paid[p], 2),
             'owes': round(owes[p], 2),
-            'net': round(paid[p] - owes[p], 2)
+            'net': round(net_total, 2),
+            'settled': round(settlements[p], 2)
         }
     return detailed
 
@@ -244,6 +312,8 @@ def index():
         flash('Nie znaleziono użytkownika.', 'danger')
         return redirect(url_for('login'))
 
+    user_default_currency = user.get('main_currency', 'PLN')
+
     # wyjazdy
     active_trip = ensure_active_trip()
     active_trip_id = session['active_trip_id']
@@ -252,7 +322,7 @@ def index():
     edit_id = None
     edit_tx = None
 
-    main_currency = user.get('main_currency', 'PLN')
+    main_currency = active_trip.get('main_currency', user_default_currency)
     currency_rates = user.get('currency_rates', {"PLN": 1.0})
     download_currency = main_currency
 
@@ -269,6 +339,7 @@ def index():
                 'description': desc,
                 'archived_at': None,
                 'created_at': datetime.utcnow(),
+                'main_currency': main_currency,
             }).inserted_id
             session['active_trip_id'] = str(tid)
             flash(f'Utworzono i ustawiono wyjazd: {name}.', 'success')
@@ -386,12 +457,51 @@ def index():
             else:
                 flash('Brak id do usunięcia.', 'danger')
 
+        elif action == 'add_payment':
+            giver = request.form.get('payment_from', '').strip()
+            receiver = request.form.get('payment_to', '').strip()
+            amount_str = request.form.get('payment_amount', '').strip()
+            pay_cur = request.form.get('payment_currency', main_currency)
+            note = request.form.get('payment_note', '').strip()
+            if not giver or not receiver or not amount_str:
+                flash('Płatnik, odbiorca i kwota są wymagane dla rozliczenia.', 'danger')
+            else:
+                try:
+                    amount = float(amount_str.replace(',', '.'))
+                    payments_col.insert_one({
+                        'user_id': session['user_id'],
+                        'trip_id': session['active_trip_id'],
+                        'from': giver,
+                        'to': receiver,
+                        'amount': amount,
+                        'currency': pay_cur,
+                        'note': note,
+                        'created_at': datetime.utcnow()
+                    })
+                    flash('Dodano bezpośrednią spłatę.', 'success')
+                    return redirect(url_for('index'))
+                except Exception:
+                    flash('Nieprawidłowa kwota rozliczenia.', 'danger')
+
+        elif action == 'delete_payment':
+            pay_id = request.form.get('payment_id')
+            if pay_id:
+                payments_col.delete_one({'_id': ObjectId(pay_id), 'user_id': session['user_id']})
+                flash('Usunięto spłatę.', 'info')
+                return redirect(url_for('index'))
+            else:
+                flash('Brak id spłaty do usunięcia.', 'danger')
+
         elif action == 'set_main_currency':
             new_main = request.form.get('main_currency')
             if new_main and new_main in currency_rates:
-                users_col.update_one({'_id': ObjectId(session['user_id'])}, {'$set': {'main_currency': new_main}})
+                trips_col.update_one(
+                    {'_id': ObjectId(active_trip_id), 'user_id': session['user_id']},
+                    {'$set': {'main_currency': new_main}}
+                )
                 flash(f'Zmieniono walutę główną na {new_main}.', 'success')
                 main_currency = new_main
+                active_trip['main_currency'] = new_main
             else:
                 flash("Brak kursu dla tej waluty – najpierw ustaw kurs!", 'danger')
 
@@ -423,7 +533,8 @@ def index():
 
         elif action == 'reset':
             transactions_col.delete_many({'user_id': session['user_id'], 'trip_id': session['active_trip_id']})
-            flash('Wyczyszczono wszystkie transakcje tego wyjazdu.', 'warning')
+            payments_col.delete_many({'user_id': session['user_id'], 'trip_id': session['active_trip_id']})
+            flash('Wyczyszczono wszystkie transakcje i spłaty tego wyjazdu.', 'warning')
             return redirect(url_for('index'))
 
         elif action == 'import':
@@ -453,18 +564,18 @@ def index():
 
     # odśwież dane po POST
     user = get_user()
-    main_currency = user.get('main_currency', 'PLN')
     currency_rates = user.get('currency_rates', {"PLN": 1.0})
-    download_currency = request.form.get('download_currency', main_currency)
 
-    # aktywny wyjazd i transakcje
     active_trip = ensure_active_trip()
     active_trip_id = session['active_trip_id']
+    main_currency = active_trip.get('main_currency', user.get('main_currency', 'PLN'))
+    download_currency = request.form.get('download_currency', main_currency)
     transactions = fetch_transactions(session['user_id'], active_trip_id)
+    payments = fetch_payments(session['user_id'], active_trip_id)
 
     try:
-        settlement_matrix = compute_settlement_matrix(transactions, main_currency, currency_rates)
-        detailed = get_detailed_settlement(transactions, main_currency, currency_rates)
+        settlement_matrix = compute_settlement_matrix(transactions, payments, main_currency, currency_rates)
+        detailed = get_detailed_settlement(transactions, payments, main_currency, currency_rates)
         lodging = get_lodging_summary(transactions, main_currency, currency_rates)
         positives = sorted(p for p, d in detailed.items() if d['net'] > 0)
         negatives = sorted(p for p, d in detailed.items() if d['net'] < 0)
@@ -477,6 +588,8 @@ def index():
         negatives = []
 
     available_currencies = list(currency_rates.keys())
+    if main_currency not in available_currencies:
+        available_currencies.append(main_currency)
     download_currency = download_currency if download_currency in available_currencies else main_currency
 
     non_archived_trips, archived_trips = list_trips(session['user_id'])
@@ -496,6 +609,7 @@ def index():
         supported_currencies=SUPPORTED_CURRENCIES,
         available_currencies=available_currencies,
         download_currency=download_currency,
+        payments=payments,
         # wyjazdy
         non_archived_trips=non_archived_trips,
         archived_trips=archived_trips,
@@ -509,9 +623,9 @@ def index():
 def download_json():
     """pobranie JSON tylko dla aktywnego wyjazdu"""
     user = get_user()
-    main_currency = user.get('main_currency', 'PLN')
     currency_rates = user.get('currency_rates', {"PLN": 1.0})
-
+    active_trip = ensure_active_trip()
+    main_currency = active_trip.get('main_currency', user.get('main_currency', 'PLN'))
     # akceptuj zarówno POST z formularza (download_currency), jak i GET ?currency=
     to_cur = request.values.get('download_currency') or request.args.get('currency') or main_currency
 
@@ -547,11 +661,13 @@ def download_json():
 def download_report():
     """raport HTML tylko dla aktywnego wyjazdu"""
     user = get_user()
-    main_currency = user.get('main_currency', 'PLN')
     currency_rates = user.get('currency_rates', {"PLN": 1.0})
+    active_trip = ensure_active_trip()
+    main_currency = active_trip.get('main_currency', user.get('main_currency', 'PLN'))
     transactions = fetch_transactions(session['user_id'], session['active_trip_id'])
-    matrix = compute_settlement_matrix(transactions, main_currency, currency_rates)
-    detailed = get_detailed_settlement(transactions, main_currency, currency_rates)
+    payments = fetch_payments(session['user_id'], session['active_trip_id'])
+    matrix = compute_settlement_matrix(transactions, payments, main_currency, currency_rates)
+    detailed = get_detailed_settlement(transactions, payments, main_currency, currency_rates)
     lodging = get_lodging_summary(transactions, main_currency, currency_rates)
     positives = sorted(p for p, d in detailed.items() if d['net'] > 0)
     negatives = sorted(p for p, d in detailed.items() if d['net'] < 0)
