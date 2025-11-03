@@ -6,7 +6,9 @@ from datetime import datetime
 
 from flask import Flask, render_template, request, redirect, url_for, send_file, session, flash
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 from bson.objectid import ObjectId
+from bson.errors import InvalidId
 from collections import defaultdict
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
@@ -49,18 +51,29 @@ def register():
         password = request.form.get('password', '')
         if not username or not password:
             flash('Nazwa użytkownika i hasło są wymagane.', 'danger')
-        elif users_col.find_one({'username': username}):
+            return render_template('register.html')
+        try:
+            existing = users_col.find_one({'username': username})
+        except PyMongoError as exc:
+            report_db_issue('rejestracji - sprawdzanie unikalności użytkownika', exc)
+            return render_template('register.html')
+        if existing:
             flash('Użytkownik już istnieje.', 'danger')
         else:
-            pw_hash = generate_password_hash(password)
+            return render_template('register.html')
+        pw_hash = generate_password_hash(password)
+        try:
             users_col.insert_one({
                 'username': username,
                 'password': pw_hash,
                 'main_currency': "PLN",
                 'currency_rates': {"PLN": 1.0, "EUR": 4.0, "USD": 3.8}
             })
-            flash('Rejestracja zakończona sukcesem! Zaloguj się.', 'success')
-            return redirect(url_for('login'))
+        except PyMongoError as exc:
+            report_db_issue('rejestracji - zapisywanie użytkownika', exc)
+            return render_template('register.html')
+        flash('Rejestracja zakończona sukcesem! Zaloguj się.', 'success')
+        return redirect(url_for('login'))
     return render_template('register.html')
 
 
@@ -69,13 +82,22 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        user = users_col.find_one({'username': username})
+        try:
+            user = users_col.find_one({'username': username})
+        except PyMongoError as exc:
+            report_db_issue('logowania - wyszukiwanie użytkownika', exc)
+            return render_template('login.html')
         if not user or not check_password_hash(user['password'], password):
             flash('Nieprawidłowe dane logowania.', 'danger')
         else:
             session['user_id'] = str(user['_id'])
             session['username'] = username
-            ensure_active_trip()  # NEW - ustaw aktywny wyjazd
+            active_trip = ensure_active_trip()  # NEW - ustaw aktywny wyjazd
+            if not active_trip or not active_trip.get('_id'):
+                session.pop('user_id', None)
+                session.pop('username', None)
+                session.pop('active_trip_id', None)
+                return render_template('login.html')
             flash(f'Witaj, {username}!', 'success')
             return redirect(url_for('index'))
     return render_template('login.html')
@@ -87,43 +109,65 @@ def logout():
     flash('Wylogowano.', 'info')
     return redirect(url_for('login'))
 
+def report_db_issue(context, exc):
+    app.logger.exception('Błąd bazy danych podczas %s: %s', context, exc)
+    flash('Wystąpił problem z połączeniem z bazą danych. Spróbuj ponownie później.', 'danger')
 
 def get_user():
-    return users_col.find_one({'_id': ObjectId(session['user_id'])})
-
+    try:
+        return users_col.find_one({'_id': ObjectId(session['user_id'])})
+    except (InvalidId, KeyError):
+        app.logger.warning('Niepoprawne ID użytkownika w sesji podczas pobierania użytkownika.')
+        return None
+    except PyMongoError as exc:
+        report_db_issue('pobierania danych użytkownika', exc)
+        return None
 
 # --- WYJAZDY ---
 
 def ensure_active_trip():
     """zapewnia, że istnieje aktywny wyjazd w sesji; jeśli nie, tworzy domyślny nienarchiwalny"""
-    user = None
-    if 'user_id' in session:
-        user = users_col.find_one({'_id': ObjectId(session['user_id'])})
-    user_default_currency = (user or {}).get('main_currency', 'PLN')
-    if session.get('active_trip_id'):
-        t = trips_col.find_one({'_id': ObjectId(session['active_trip_id']), 'user_id': session['user_id']})
-        if t and t.get('archived_at') is None:
-            if 'main_currency' not in t:
-                trips_col.update_one({'_id': t['_id']}, {'$set': {'main_currency': user_default_currency}})
-                t['main_currency'] = user_default_currency
-            return t
+    user_default_currency = 'PLN'
+    try:
+        user = None
+        if 'user_id' in session:
+            user = users_col.find_one({'_id': ObjectId(session['user_id'])})
+        user_default_currency = (user or {}).get('main_currency', 'PLN')
+        active_trip_id = session.get('active_trip_id')
+        if active_trip_id:
+            try:
+                trip_object_id = ObjectId(active_trip_id)
+            except InvalidId:
+                app.logger.warning('Niepoprawne ID wyjazdu w sesji: %s', active_trip_id)
+                session['active_trip_id'] = None
+            else:
+                t = trips_col.find_one({'_id': trip_object_id, 'user_id': session['user_id']})
+                if t and t.get('archived_at') is None:
+                    if 'main_currency' not in t:
+                        trips_col.update_one({'_id': t['_id']}, {'$set': {'main_currency': user_default_currency}})
+                        t['main_currency'] = user_default_currency
+                    return t
 
-    t = trips_col.find_one({'user_id': session['user_id'], 'archived_at': None}, sort=[('created_at', -1)])
-    if not t:
-        tid = trips_col.insert_one({
-            'user_id': session['user_id'],
-            'name': 'Domyślny wyjazd',
-            'description': '',
-            'archived_at': None,
-            'created_at': datetime.utcnow(),
-            'main_currency': user_default_currency,
-        }).inserted_id
-        t = trips_col.find_one({'_id': tid})
-    elif 'main_currency' not in t:
-        trips_col.update_one({'_id': t['_id']}, {'$set': {'main_currency': user_default_currency}})
-        t['main_currency'] = user_default_currency
-    session['active_trip_id'] = str(t['_id'])
-    return t
+        t = trips_col.find_one({'user_id': session['user_id'], 'archived_at': None}, sort=[('created_at', -1)])
+        if not t:
+            tid = trips_col.insert_one({
+                'user_id': session['user_id'],
+                'name': 'Domyślny wyjazd',
+                'description': '',
+                'archived_at': None,
+                'created_at': datetime.utcnow(),
+                'main_currency': user_default_currency,
+            }).inserted_id
+            t = trips_col.find_one({'_id': tid})
+        elif 'main_currency' not in t:
+            trips_col.update_one({'_id': t['_id']}, {'$set': {'main_currency': user_default_currency}})
+            t['main_currency'] = user_default_currency
+        session['active_trip_id'] = str(t['_id'])
+        return t
+    except PyMongoError as exc:
+        session['active_trip_id'] = session.get('active_trip_id', None)
+        report_db_issue('inicjalizacji aktywnego wyjazdu', exc)
+        return {'_id': None, 'main_currency': user_default_currency}
 
 
 def list_trips(user_id):
@@ -316,7 +360,7 @@ def index():
 
     # wyjazdy
     active_trip = ensure_active_trip()
-    active_trip_id = session['active_trip_id']
+    active_trip_id = session.get('active_trip_id')
     non_archived_trips, archived_trips = list_trips(session['user_id'])
 
     edit_id = None
@@ -567,7 +611,7 @@ def index():
     currency_rates = user.get('currency_rates', {"PLN": 1.0})
 
     active_trip = ensure_active_trip()
-    active_trip_id = session['active_trip_id']
+    active_trip_id = session.get('active_trip_id')
     main_currency = active_trip.get('main_currency', user.get('main_currency', 'PLN'))
     download_currency = request.form.get('download_currency', main_currency)
     transactions = fetch_transactions(session['user_id'], active_trip_id)
