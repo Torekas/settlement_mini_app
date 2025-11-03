@@ -6,6 +6,8 @@ from datetime import datetime
 
 from flask import Flask, render_template, request, redirect, url_for, send_file, session, flash
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
+from bson.errors import InvalidId
 from bson.objectid import ObjectId
 from collections import defaultdict
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -68,18 +70,64 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
-        user = users_col.find_one({'username': username})
-        if not user or not check_password_hash(user['password'], password):
-            flash('Nieprawidłowe dane logowania.', 'danger')
-        else:
+        try:
+            username = (request.form.get('username') or '').strip()
+            password = request.form.get('password') or ''
+            if not username or not password:
+                flash('podaj nazwę użytkownika i hasło.', 'danger')
+                return redirect(url_for('login'))
+
+            try:
+                user = users_col.find_one({'username': username})
+            except PyMongoError:
+                flash('problem z połączeniem z bazą. spróbuj ponownie za chwilę.', 'danger')
+                return redirect(url_for('login'))
+
+            if not user:
+                flash('nieprawidłowe dane logowania.', 'danger')
+                return redirect(url_for('login'))
+
+            pw_hash = user.get('password')
+            if not pw_hash or not check_password_hash(pw_hash, password):
+                flash('nieprawidłowe dane logowania.', 'danger')
+                return redirect(url_for('login'))
+
+            # zaloguj
             session['user_id'] = str(user['_id'])
             session['username'] = username
-            ensure_active_trip()  # NEW - ustaw aktywny wyjazd
-            flash(f'Witaj, {username}!', 'success')
+            try:
+                ensure_active_trip()
+            except Exception:
+                # jeśli coś poszło nie tak z tripem – nie wysypuj, po prostu czyść „aktywny”
+                session.pop('active_trip_id', None)
+
+            flash(f'witaj, {username}!', 'success')
             return redirect(url_for('index'))
+
+        except Exception as e:
+            # ostatnia linia obrony – nie pokazuj 500
+            print('login error:', repr(e))
+            flash('wystąpił nieoczekiwany błąd przy logowaniu. spróbuj ponownie.', 'danger')
+            return redirect(url_for('login'))
+
     return render_template('login.html')
+
+@app.errorhandler(500)
+def handle_500(err):
+    # log do konsoli/serwera – przydatne przy debugowaniu
+    try:
+        print('HTTP 500:', repr(err))
+    except Exception:
+        pass
+    # bezpieczny powrót do logowania z komunikatem
+    flash('coś poszło nie tak. spróbuj ponownie.', 'danger')
+    return redirect(url_for('login'))
+
+@app.errorhandler(PyMongoError)
+def handle_mongo_error(err):
+    print('Mongo error:', repr(err))
+    flash('problem z bazą danych. spróbuj ponownie.', 'danger')
+    return redirect(url_for('login'))
 
 
 @app.route('/logout')
@@ -90,14 +138,24 @@ def logout():
 
 
 def get_user():
-    return users_col.find_one({'_id': ObjectId(session['user_id'])})
+    uid = session.get('user_id')
+    if not uid:
+        return None
+    try:
+        return users_col.find_one({'_id': ObjectId(uid)})
+    except (InvalidId, PyMongoError):
+        return None
 
 
 # --- WYJAZDY ---
 
 def ensure_active_trip():
-    if session.get('active_trip_id'):
-        t = trips_col.find_one({'_id': ObjectId(session['active_trip_id']), 'user_id': session['user_id']})
+    atid = session.get('active_trip_id')
+    if atid:
+        try:
+            t = trips_col.find_one({'_id': ObjectId(atid), 'user_id': session['user_id']})
+        except InvalidId:
+            t = None
         if t and t.get('archived_at') is None:
             # SEED: jeśli stare tripy nie mają pól walutowych – uzupełnij
             if 'main_currency' not in t or 'currency_rates' not in t:
